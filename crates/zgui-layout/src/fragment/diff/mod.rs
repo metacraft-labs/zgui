@@ -976,8 +976,15 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         let mut child_inks_moved = false;
         for index in children_mark..children_end {
             let child = self.scratch.children[index];
-            let before = self.folded_reading(child);
             let clean = self.can_skip(child, owed.node);
+            // A child the arm below takes from its cached fold keeps its pieces as they are, so
+            // its reading cannot move; only the others are read before and after.
+            let kept = space_stable
+                && settled
+                && clean
+                && !self.chases(child)
+                && (size_stable || self.can_translate(child));
+            let before = (!kept).then(|| self.folded_reading(child));
             let next = self.scratch.next_orders[orders_mark + (index - children_mark)];
             let child_between = (cursor, next);
             let folded = match movement {
@@ -1037,7 +1044,9 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
                     ),
                 },
             };
-            child_inks_moved |= self.folded_reading(child) != before;
+            if let Some(before) = before {
+                child_inks_moved |= self.folded_reading(child) != before;
+            }
             let mut folded = folded;
             match folded.anchor {
                 // A fixed box inside a content space measures its ink where it hangs from.
