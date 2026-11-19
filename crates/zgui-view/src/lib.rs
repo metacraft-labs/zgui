@@ -108,7 +108,7 @@ pub use crate::binding::{A11yBinding, AttrEntry, Attrs, Binding, Classes};
 pub use crate::cx::{BuildCx, BuildCxOwned, current_host, current_observations, provide_host};
 pub use crate::dom::{
     Dom, DomError, DomHandle, ListenerId, ObservationHandle, ObservationSink, Observed,
-    ObservedValue, OverlayLayer,
+    ObservedValue, OverlayLayer, PaintProperty, StyleId, TemplateKind, TemplateNode, TreeTemplate,
 };
 pub use crate::event::{
     AnyEvent, DiscardCommands, EventControl, EventCx, EventSink, EventType, EventView,

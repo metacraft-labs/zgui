@@ -6,7 +6,7 @@ use zgui_dom::NodeKind;
 use zgui_interned::{AttrName, ClassName, CustomPropertyName, ElementName, Ident};
 use zgui_view::{
     Dom, DomError, EventCx, ListenerId, NodeId, ObservationHandle, ObservationSink, Observed,
-    OverlayLayer,
+    OverlayLayer, PaintProperty, StyleId, TreeTemplate,
 };
 use zgui_vocab::{EventKind, ListenerOptions, PropKey, PropValue, Semantics, UiState};
 
@@ -149,6 +149,31 @@ impl Dom for DocumentDom {
                 "dropped an inline declaration: no such property, or the value does not parse for it"
             );
         }
+    }
+
+    fn set_style(&self, el: NodeId, style: Option<&StyleId>) {
+        let Some(index) = self.live_index_of(el) else {
+            return;
+        };
+        let block = style.map(|style| self.style_block(style));
+        self.edit(|edit| edit.set_inline_style_block(index, block));
+    }
+
+    fn set_paint(&self, el: NodeId, property: PaintProperty, value: Option<&str>) {
+        let Some(index) = self.live_index_of(el) else {
+            return;
+        };
+        let name = property.css_name();
+        let painted = self.edit(|edit| edit.set_paint(index, name, value));
+        if !painted {
+            // Not a value the painter takes on its own — `currentColor`, a variable, a colour
+            // mix — so it goes through the cascade like any other declaration.
+            self.set_style_property(el, name, value);
+        }
+    }
+
+    fn create_tree(&self, template: &TreeTemplate) -> Vec<NodeId> {
+        self.build_tree(template)
     }
 
     fn set_custom_property(&self, el: NodeId, property: CustomPropertyName, value: Option<&str>) {

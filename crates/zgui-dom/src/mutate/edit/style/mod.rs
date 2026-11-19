@@ -52,6 +52,80 @@ impl Edit<'_> {
         self.recascade(node);
     }
 
+    /// Replaces every declaration `node` carries of its own with `block`, shared as it is.
+    ///
+    /// Elements given the same block share it: the style engine sees their own declarations are
+    /// the same, which lets it share their computed style. A later write of one declaration to one
+    /// of them copies the block first, so the others keep theirs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` names no live node of the document.
+    pub fn set_inline_style_block(&mut self, node: NodeIndex, block: Option<StyleBlock>) {
+        let store = self.store();
+        let key = store.key_of(node);
+        let slot = store.columns_mut().inline_style.get_mut(key);
+        match (&*slot, &block) {
+            (None, None) => return,
+            (Some(held), Some(next)) if servo_arc::Arc::ptr_eq(held, next) => return,
+            _ => {}
+        }
+        *slot = block;
+        self.recascade(node);
+    }
+
+    /// Parses `css` into a block that [`Edit::set_inline_style_block`] can share between elements.
+    pub fn parse_style_block(&self, css: &str) -> StyleBlock {
+        let lock = self.document().store().lock().clone();
+        wrapped(&lock, parse::attribute(css))
+    }
+
+    /// Sets or removes one paint-only value of `node` without computing its style again.
+    ///
+    /// `property` is `background-color`, `opacity`, `border-color` or `outline-color`. The value is
+    /// written where the painter reads a running animation's values, composed over the element's
+    /// computed style at the moment it is painted, and the element owes a repaint and nothing
+    /// else: no restyle, no layout. A cheap animation running on the same property paints over it.
+    ///
+    /// Returns `false`, changing nothing, for another property, or for a value that is not an
+    /// absolute colour (for the colours) or a number or percentage (for `opacity`). A caller falls
+    /// back to [`Edit::set_style_property`] for those.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` names no live node of the document.
+    pub fn set_paint(&mut self, node: NodeIndex, property: &str, value: Option<&str>) -> bool {
+        use crate::side::AnimOverride;
+        let parsed = match value {
+            None => None,
+            Some(value) => match paint_value(property, value) {
+                Some(parsed) => Some(parsed),
+                None => return false,
+            },
+        };
+        let store = self.store();
+        let key = store.key_of(node);
+        let slot = store.columns_mut().paint.get_mut(key);
+        let mut over = slot.take().map_or_else(AnimOverride::new, |held| *held);
+        match (property, parsed) {
+            ("background-color", Some(PaintValue::Color(c))) => over.background_color = Some(c),
+            ("background-color", None) => over.background_color = None,
+            ("border-color", Some(PaintValue::Color(c))) => over.border_colors = Some([c; 4]),
+            ("border-color", None) => over.border_colors = None,
+            ("outline-color", Some(PaintValue::Color(c))) => over.outline_color = Some(c),
+            ("outline-color", None) => over.outline_color = None,
+            ("opacity", Some(PaintValue::Opacity(o))) => over.opacity = Some(o),
+            ("opacity", None) => over.opacity = None,
+            _ => {
+                *slot = (!over.is_empty()).then(|| Box::new(over));
+                return false;
+            }
+        }
+        *slot = (!over.is_empty()).then(|| Box::new(over));
+        crate::mutate::ancestors::mark(self.store(), node, crate::Dirty::REPAINT);
+        true
+    }
+
     /// Sets or removes one of `node`'s own declarations, leaving the others alone.
     ///
     /// Returns `false`, changing nothing, when `property` is not a property this build has or
@@ -85,6 +159,14 @@ impl Edit<'_> {
         let store = self.store();
         let key = store.key_of(node);
         let lock = store.lock().clone();
+        // A block shared with other elements is copied before it is written, so the write lands
+        // on this element alone.
+        if let Some(shared) = store.columns_mut().inline_style.get_mut(key).as_mut()
+            && !shared.is_unique()
+        {
+            let copy = shared.read_with(&lock.read()).clone();
+            *shared = wrapped(&lock, copy);
+        }
         // A reference-count bump, taken so the block can be written through while the column is
         // not borrowed: the handle and the column name the same block, so the write lands once.
         let held: Option<StyleBlock> = store.columns_mut().inline_style.get_mut(key).clone();
@@ -159,6 +241,43 @@ impl Edit<'_> {
         batch
             .hints
             .record(store, node, RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
+    }
+}
+
+/// A parsed paint-only value.
+enum PaintValue {
+    Color(style::color::AbsoluteColor),
+    Opacity(f32),
+}
+
+/// Parses `value` for the paint-only `property`, or `None` when it is not a value the painter can
+/// take without a cascade.
+fn paint_value(property: &str, value: &str) -> Option<PaintValue> {
+    use style::properties::PropertyDeclaration;
+    use style::values::specified::Color;
+    if property == "opacity" {
+        let value = value.trim();
+        let number = match value.strip_suffix('%') {
+            Some(percent) => percent.trim().parse::<f32>().ok()? / 100.0,
+            None => value.parse::<f32>().ok()?,
+        };
+        return number
+            .is_finite()
+            .then(|| PaintValue::Opacity(number.clamp(0.0, 1.0)));
+    }
+    if !matches!(
+        property,
+        "background-color" | "border-color" | "outline-color"
+    ) {
+        return None;
+    }
+    let block = parse::attribute(&format!("color:{value}"));
+    match block.declarations().first() {
+        Some(PropertyDeclaration::Color(color)) => match &color.0 {
+            Color::Absolute(absolute) => Some(PaintValue::Color(absolute.color)),
+            _ => None,
+        },
+        _ => None,
     }
 }
 

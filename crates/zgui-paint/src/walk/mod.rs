@@ -679,8 +679,18 @@ impl Pass<'_, '_> {
     ///
     /// An anonymous box has no element and therefore no animation of its own; it inherits the
     /// composited alpha of the box above it exactly as it inherits everything else.
-    fn anim_of(&self, store: &LayoutStore, key: BoxKey) -> Option<&AnimOverride> {
-        self.input.anim.get(store.get(key)?.source?)
+    ///
+    /// Paint-only values the view set directly are composed under it, so the two arrive as one
+    /// override; a box with only one of them borrows it.
+    fn anim_of(&self, store: &LayoutStore, key: BoxKey) -> Option<Cow<'_, AnimOverride>> {
+        let source = store.get(key)?.source?;
+        match (self.input.anim.paint(source), self.input.anim.get(source)) {
+            (None, None) => None,
+            (Some(only), None) | (None, Some(only)) => Some(Cow::Borrowed(only)),
+            (Some(set), Some(running)) => {
+                Some(Cow::Owned(crate::lower::anim::layered(set, running)))
+            }
+        }
     }
 
     /// Whether the damage reaches `rect`.
@@ -849,6 +859,7 @@ impl Pass<'_, '_> {
                 .lower(&store.node(slice.box_).style, self.input.scale);
             let anim = self
                 .anim_of(store, slice.box_)
+                .as_deref()
                 .map_or(0, AnimOverride::signature);
             hash = hash.u32(style.index()).u64(anim);
         }
@@ -882,7 +893,7 @@ impl Pass<'_, '_> {
                 continue;
             };
             if let Some(over) = self.anim_of(store, slice.box_) {
-                crate::lower::anim::compose(&mut style, over);
+                crate::lower::anim::compose(&mut style, &over);
             }
             out.push(crate::emit::inline::InlinePaint::of(
                 slice,
@@ -1091,7 +1102,7 @@ impl Pass<'_, '_> {
                     return;
                 };
                 if let Some(over) = self.anim_of(self.input.store, fragment.box_) {
-                    crate::lower::anim::compose(&mut style, over);
+                    crate::lower::anim::compose(&mut style, &over);
                 }
                 let inline = self.inline_paints(fragment, slices);
                 let mut emission =
@@ -1269,7 +1280,8 @@ impl stacking::Visitor for Pass<'_, '_> {
         // looks like when one of them is hovered. That is a reason to copy the one box that is
         // animating, and every other box borrows: a `PaintStyle` is several hundred bytes with two
         // inline vectors and a path in it, and at most one box on a screen is being hovered.
-        let over = self.anim_of(store, key);
+        let held = self.anim_of(store, key);
+        let over = held.as_deref();
         let style = match over {
             Some(over) => {
                 let mut composed = entry.clone();
@@ -1282,7 +1294,12 @@ impl stacking::Visitor for Pass<'_, '_> {
 
         let fragments = store.fragments_of_box(key);
         let own = fragments.first().and_then(|frag| store.fragment(*frag));
-        let owned = over.and_then(|over| {
+        // A colour the view set directly is drawn as a value: only the animation stage writes the
+        // slots an owned paint names, so a chunk naming one would draw it before anything does.
+        let set_directly = node
+            .source
+            .is_some_and(|source| self.input.anim.paint(source).is_some());
+        let owned = over.filter(|_| !set_directly).and_then(|over| {
             OwnedPaints::of(over, own.map_or(Edges::ZERO, |fragment| fragment.border))
         });
 
@@ -1380,7 +1397,7 @@ impl stacking::Visitor for Pass<'_, '_> {
             let style = match self.anim_of(store, key) {
                 Some(over) => {
                     let mut composed = entry.clone();
-                    crate::lower::anim::compose(&mut composed, over);
+                    crate::lower::anim::compose(&mut composed, &over);
                     Cow::Owned(composed)
                 }
                 None => Cow::Borrowed(entry),

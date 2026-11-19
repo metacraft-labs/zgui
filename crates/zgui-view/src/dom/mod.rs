@@ -10,6 +10,7 @@ mod handle;
 mod listener_id;
 mod observe;
 mod overlay;
+mod template;
 
 use std::rc::Rc;
 
@@ -24,6 +25,7 @@ pub use crate::dom::handle::DomHandle;
 pub use crate::dom::listener_id::ListenerId;
 pub use crate::dom::observe::{ObservationHandle, ObservationSink, Observed, ObservedValue};
 pub use crate::dom::overlay::OverlayLayer;
+pub use crate::dom::template::{PaintProperty, StyleId, TemplateKind, TemplateNode, TreeTemplate};
 
 /// The node-tree operations the view layer needs.
 ///
@@ -156,6 +158,64 @@ pub trait Dom {
     /// engine's property table whatever shape it arrives in, and an unknown name is dropped with
     /// a diagnostic rather than rejected here.
     fn set_style_property(&self, el: NodeId, property: &str, value: Option<&str>);
+
+    /// Sets or removes the inline declarations `style` names, replacing the element's own.
+    ///
+    /// The default spells the declarations out with [`Dom::set_style_text`]. A backend may parse
+    /// a `StyleId` once and share the parsed block between every element given it.
+    fn set_style(&self, el: NodeId, style: Option<&StyleId>) {
+        self.set_style_text(el, style.map(StyleId::css));
+    }
+
+    /// Sets or removes one property that changes only what `el` is painted in.
+    ///
+    /// The default sets it as an inline declaration. A backend may instead write it where its
+    /// painter reads it, without computing the element's style again: the element is repainted,
+    /// and nothing is restyled or laid out. Such a value does not take part in the cascade, so a
+    /// transition declared on the property does not run for it.
+    fn set_paint(&self, el: NodeId, property: PaintProperty, value: Option<&str>) {
+        self.set_style_property(el, property.css_name(), value);
+    }
+
+    /// Creates every node of `template` and links them, returning them in the template's order.
+    ///
+    /// The root is returned first and is left detached, as [`Dom::create_element`] leaves a new
+    /// element. The default issues one call per node; a backend may apply the whole template as
+    /// one batch.
+    ///
+    /// # Panics
+    ///
+    /// If the template is not [well formed](TreeTemplate::is_well_formed).
+    fn create_tree(&self, template: &TreeTemplate) -> Vec<NodeId> {
+        assert!(
+            template.is_well_formed(),
+            "a template's parents come before their children"
+        );
+        let mut nodes: Vec<NodeId> = Vec::with_capacity(template.nodes.len());
+        for node in &template.nodes {
+            let created = match &node.kind {
+                TemplateKind::Element(name) => {
+                    let el = self.create_element(*name);
+                    if !node.classes.is_empty() {
+                        self.set_classes(el, &node.classes);
+                    }
+                    for (name, value) in &node.attributes {
+                        self.set_attribute(el, *name, Some(value));
+                    }
+                    if let Some(style) = &node.style {
+                        self.set_style(el, Some(style));
+                    }
+                    el
+                }
+                TemplateKind::Text(text) => self.create_text(text),
+            };
+            if let Some(parent) = node.parent {
+                self.insert(nodes[parent], created, None);
+            }
+            nodes.push(created);
+        }
+        nodes
+    }
 
     /// Sets or removes one custom property on this element.
     fn set_custom_property(&self, el: NodeId, property: CustomPropertyName, value: Option<&str>);

@@ -25,6 +25,15 @@ use crate::lower::PaintStyle;
 pub trait AnimOverrides {
     /// What `node`'s running animations override right now, if anything.
     fn get(&self, node: NodeKey) -> Option<&AnimOverride>;
+
+    /// The paint-only values a view set on `node` directly, without a cascade, if any.
+    ///
+    /// Composed under [`AnimOverrides::get`]: a running animation paints over them. The default has
+    /// none.
+    fn paint(&self, node: NodeKey) -> Option<&AnimOverride> {
+        let _ = node;
+        None
+    }
 }
 
 /// Nothing animating anywhere.
@@ -47,6 +56,25 @@ impl AnimOverrides for Document {
             .get(node)
             .and_then(Option::as_ref)
             .map(Box::as_ref)
+    }
+
+    fn paint(&self, node: NodeKey) -> Option<&AnimOverride> {
+        self.store()
+            .columns()
+            .paint
+            .get(node)
+            .and_then(Option::as_ref)
+            .map(Box::as_ref)
+    }
+}
+
+/// `under` with every value `over` sets put over it.
+pub fn layered(under: &AnimOverride, over: &AnimOverride) -> AnimOverride {
+    AnimOverride {
+        opacity: over.opacity.or(under.opacity),
+        background_color: over.background_color.or(under.background_color),
+        border_colors: over.border_colors.or(under.border_colors),
+        outline_color: over.outline_color.or(under.outline_color),
     }
 }
 

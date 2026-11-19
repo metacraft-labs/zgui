@@ -47,6 +47,7 @@ zgui-scene = { path = "../zgui-scene", version = "0.1.0" }
 # The display list a renderer is actually handed, so `<vector>`'s acceptance ends at a renderer
 # rather than at a scene a test built and then read back to itself.
 zgui-bits = { path = "../zgui-bits", version = "0.1.0" }
+servo_arc.workspace = true
 zgui-render = { path = "../zgui-render", version = "0.1.0" }
 zgui-testkit-scene = { path = "../zgui-testkit-scene", version = "0.1.0" }
 

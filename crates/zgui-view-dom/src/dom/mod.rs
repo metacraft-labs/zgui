@@ -4,6 +4,7 @@ mod attrs;
 mod build;
 mod nodes;
 mod query;
+mod tree;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -89,6 +90,8 @@ pub struct DocumentDom {
     /// node every frame. It fires only for elements whose name is in `watched_tags`, after the
     /// write has landed, outside the edit batch.
     attribute_hook: RefCell<Option<AttributeHook>>,
+    /// The parsed declaration blocks of the shared styles applied so far.
+    style_blocks: RefCell<tree::StyleBlocks>,
 }
 
 /// What [`DocumentDom::set_attribute_hook`] installs.
@@ -132,6 +135,7 @@ impl DocumentDom {
                 ElementName::new("surface"),
             ]),
             attribute_hook: RefCell::new(None),
+            style_blocks: RefCell::new(tree::StyleBlocks::default()),
         }
     }
 
@@ -358,6 +362,11 @@ impl DocumentDom {
         zgui_dom::arena::end_frame(&mut document);
         self.handlers.borrow_mut().retain_live(&document);
         self.observations.borrow_mut().retain_live(&document);
+    }
+
+    /// The parsed blocks of the shared styles, for the methods that apply them.
+    pub(crate) fn style_blocks(&self) -> &RefCell<tree::StyleBlocks> {
+        &self.style_blocks
     }
 
     /// The window's root and its overlay layers.

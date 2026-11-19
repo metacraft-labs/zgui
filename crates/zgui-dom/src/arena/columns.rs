@@ -66,6 +66,8 @@ pub struct Columns {
     pub observed: PagedVec<NodeKey, ObservationSlots>,
     /// A cheap animation's private values, live only while one is running.
     pub anim: PagedVec<NodeKey, AnimSlot>,
+    /// Paint-only values a view set directly, without a cascade; see [`crate::Edit::set_paint`].
+    pub paint: PagedVec<NodeKey, AnimSlot>,
     /// Which interaction-state bits any active selector could match this node on.
     ///
     /// A cache, not a fact: absent means "not computed, or dropped because the node's identity
@@ -98,6 +100,7 @@ impl Columns {
             props: PagedVec::for_domain(domain),
             observed: PagedVec::for_domain(domain),
             anim: PagedVec::for_domain(domain),
+            paint: PagedVec::for_domain(domain),
             state_mask: PagedVec::for_domain(domain),
             paint_key: SlotVec::for_domain(domain),
             a11y_key: SlotVec::for_domain(domain),
@@ -120,6 +123,7 @@ impl Columns {
             + self.props.pages()
             + self.observed.pages()
             + self.anim.pages()
+            + self.paint.pages()
             + self.state_mask.pages()
     }
 
@@ -140,6 +144,7 @@ impl Columns {
         self.props.clear(key);
         self.observed.clear(key);
         self.anim.clear(key);
+        self.paint.clear(key);
         self.state_mask.clear(key);
         self.paint_key.remove(key);
         self.a11y_key.remove(key);
@@ -163,6 +168,7 @@ impl Columns {
         self.props.compact_by(PropMap::is_empty);
         self.observed.compact();
         self.anim.compact_by(Option::is_none);
+        self.paint.compact_by(Option::is_none);
         self.state_mask.compact_by(Option::is_none);
     }
 }
