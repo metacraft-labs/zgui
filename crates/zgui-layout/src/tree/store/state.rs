@@ -123,6 +123,9 @@ pub(crate) struct BoxLayout {
     pub(crate) auto_scroll: (bool, bool),
     /// The gutter this box keeps reserved while it is locked, if it is.
     pub(crate) scroll_lock: Option<(bool, bool)>,
+    /// Moves whenever the folded ink of any of this box's children changes, see
+    /// [`LayoutStore::child_ink_revision`].
+    pub(crate) child_ink_revision: u64,
 }
 
 /// The range of hit-order keys one box's subtree spans, as `(first, last)`.
@@ -295,6 +298,29 @@ impl LayoutStore {
 }
 
 impl LayoutStore {
+    /// A number that moves whenever the subtree ink or the anchor of one of `key`'s children
+    /// changes, and whenever a child gains or loses a fragment.
+    ///
+    /// The fragment pass moves it. A reader that built something from the children's inks — an
+    /// index of where each child is, which a paint pass consults to visit only the children a
+    /// damaged region reaches — keeps the number it built against and rebuilds when it moved.
+    /// Equal readings mean every child's [`Fragment::subtree_ink`](crate::Fragment::subtree_ink)
+    /// and [`Fragment::anchor`](crate::Fragment::anchor) are what they were, so long as the
+    /// number of children is too: a child that leaves is not seen by the pass that folds the
+    /// others.
+    pub fn child_ink_revision(&self, key: BoxKey) -> u64 {
+        self.state(key).map_or(0, |state| state.child_ink_revision)
+    }
+
+    /// Moves `key`'s child ink revision. Every value is used once.
+    pub(crate) fn touch_child_inks(&mut self, key: BoxKey) {
+        self.next_child_ink_revision += 1;
+        let next = self.next_child_ink_revision;
+        if let Some(state) = self.state_opt_mut(key) {
+            state.child_ink_revision = next;
+        }
+    }
+
     /// One box's layout-time state.
     pub(crate) fn state(&self, key: BoxKey) -> Option<&BoxLayout> {
         self.layout.get(key)?.as_ref()

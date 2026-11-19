@@ -29,6 +29,17 @@ pub trait Visitor {
     fn descends(&mut self, _store: &LayoutStore, _key: BoxKey) -> bool {
         true
     }
+    /// Called once per entered box before its children are asked [`Visitor::descends`]: the
+    /// positions of the children worth asking. A child outside the range is dropped unasked, so
+    /// the range must hold every child `descends` would accept. `None` asks every child.
+    fn candidates(
+        &mut self,
+        _store: &LayoutStore,
+        _parent: BoxKey,
+        _children: &[BoxKey],
+    ) -> Option<core::ops::Range<usize>> {
+        None
+    }
     /// Called on the way in. Returning `false` skips the box's subtree entirely.
     fn enter(&mut self, store: &LayoutStore, key: BoxKey) -> bool;
     /// Called on the way out, and only for a box whose [`Visitor::enter`] returned `true`.
@@ -46,7 +57,11 @@ pub fn walk(store: &LayoutStore, root: BoxKey, visitor: &mut impl Visitor) {
     }
     if let Some(node) = store.get(root) {
         let mut kept: SmallVec<[(PaintKey, BoxKey); 16]> = SmallVec::new();
-        for (position, &child) in node.children.iter().enumerate() {
+        let range = visitor
+            .candidates(store, root, &node.children)
+            .unwrap_or(0..node.children.len());
+        for position in range {
+            let child = node.children[position];
             if visitor.descends(store, child) {
                 kept.push((paint_key(store, root, node, position, child), child));
             }

@@ -957,8 +957,12 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             && rematrix::keeps_rectangles(placed.descent.matrix);
         // Deeper visits append their own regions past `children_end` and truncate them again, so
         // the indices walked here stay this box's children throughout.
+        // Whether any child's folded ink or anchor, or its set of pieces, changes in this visit,
+        // which is what moves this box's child ink revision.
+        let mut child_inks_moved = false;
         for index in children_mark..children_end {
             let child = self.scratch.children[index];
+            let before = self.folded_reading(child);
             let clean = self.can_skip(child, owed.node);
             let next = self.next_indexed_after(index + 1, children_end, between.1);
             let child_between = (cursor, next);
@@ -1019,6 +1023,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
                     ),
                 },
             };
+            child_inks_moved |= self.folded_reading(child) != before;
             let mut folded = folded;
             match folded.anchor {
                 // A fixed box inside a content space measures its ink where it hangs from.
@@ -1082,6 +1087,9 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             self.store.set_subtree_order(key, order);
         }
         self.record_fold(fragments.clone(), subtree_ink, folded, disjoint, rigid);
+        if child_inks_moved {
+            self.store.touch_child_inks(key);
+        }
         self.scratch.child_inks.truncate(inks_mark);
         self.scratch.children.truncate(children_mark);
         self.scratch.written.truncate(fragments.start);
@@ -2175,6 +2183,19 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         }
     }
 
+    /// What a child's pieces currently say about where it paints: its first piece's subtree ink,
+    /// anchor and transform, and how many pieces it has. Two equal readings mean an index built
+    /// from the first is still right for the second.
+    fn folded_reading(&self, child: BoxKey) -> FoldedReading {
+        let frags = self.store.fragments_of_box(child);
+        let first = frags.first().and_then(|frag| self.store.fragment(*frag));
+        FoldedReading {
+            pieces: frags.len(),
+            first: first
+                .map(|fragment| (fragment.subtree_ink, fragment.anchor, fragment.transform)),
+        }
+    }
+
     /// Writes the unwind answers onto this box's fragments.
     fn record_fold(
         &mut self,
@@ -2195,6 +2216,17 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             fragment.flags = fragment.flags.without(FragmentFlags::FOLDED).union(folded);
         }
     }
+}
+
+/// See [`Pass::folded_reading`].
+#[derive(Clone, Copy, PartialEq)]
+struct FoldedReading {
+    pieces: usize,
+    first: Option<(
+        Rect<DevicePx, Device>,
+        zgui_scene::SpatialId,
+        Option<zgui_scene::SpatialId>,
+    )>,
 }
 
 /// What the nested inline boxes on one line paint.

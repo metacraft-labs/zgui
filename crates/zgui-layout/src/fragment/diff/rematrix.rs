@@ -195,6 +195,10 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             }
             position += 1;
         }
+        if position > 0 {
+            // Every child was carried onto the new matrix, so every child's ink moved.
+            self.store.touch_child_inks(key);
+        }
         disjoint &= !inks.iter().any(|piece| overlaps(ink, *piece));
         disjoint &= pairwise_disjoint(&inks);
         let subtree_ink = inks.iter().fold(ink, |held, piece| held.union(*piece));

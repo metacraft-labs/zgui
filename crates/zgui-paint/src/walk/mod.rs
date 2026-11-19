@@ -16,6 +16,7 @@
 //! open, or composites one that was never begun — and neither is anything when the damage says the
 //! whole surface is being redrawn.
 
+mod children;
 pub mod corners;
 pub mod decorate;
 pub mod fill;
@@ -288,6 +289,9 @@ pub struct Painter {
     cache: PaintCache,
     /// The walk's stacks and per-frame maps, kept so a frame reuses the last frame's allocations.
     scratch: WalkScratch,
+    /// Where the children of each box with many of them paint, so the walk asks only the ones
+    /// the damage can reach.
+    children: children::ChildIndexes,
 }
 
 /// The containers one emit walk fills, empty between walks.
@@ -366,7 +370,20 @@ impl Painter {
         };
         self.cache.begin_frame();
         let scratch = std::mem::take(&mut self.scratch);
+        let pinned = input.highlights.marked().map(|marked| {
+            let mut pinned = rustc_hash::FxHashSet::default();
+            for mut at in marked {
+                while pinned.insert(at) {
+                    match input.store.get(at).and_then(|node| node.parent) {
+                        Some(parent) => at = parent,
+                        None => break,
+                    }
+                }
+            }
+            pinned
+        });
         let mut pass = Pass {
+            pinned,
             painter: self,
             input,
             scene,
@@ -387,6 +404,7 @@ impl Painter {
             shapes: scratch.shapes,
             spaces: scratch.spaces,
         };
+        pass.painter.children.retain_live(input.store);
         stacking::walk(input.store, root, &mut pass);
         let Pass {
             mut report,
@@ -504,6 +522,9 @@ impl Painter {
 
 /// One emit walk in progress.
 struct Pass<'a, 'b> {
+    /// The boxes with a caret or a selection drawn below them, whose children are asked one by
+    /// one; `None` when the highlight source cannot say, which asks every box's children so.
+    pinned: Option<rustc_hash::FxHashSet<BoxKey>>,
     /// The state that outlives the frame.
     painter: &'a mut Painter,
     /// What the walk reads.
@@ -1155,6 +1176,47 @@ fn inline_slices<'s>(
 }
 
 impl stacking::Visitor for Pass<'_, '_> {
+    fn candidates(
+        &mut self,
+        store: &LayoutStore,
+        parent: BoxKey,
+        children: &[BoxKey],
+    ) -> Option<core::ops::Range<usize>> {
+        if self
+            .pinned
+            .as_ref()
+            .is_none_or(|pinned| pinned.contains(&parent))
+        {
+            return None;
+        }
+        let range = self.painter.children.candidates(
+            store,
+            parent,
+            children,
+            self.input.damage,
+            self.input.surface,
+            self.input.placements,
+        )?;
+        // The index narrows the question `descends` answers and must never drop a child it would
+        // have accepted. Checked in every debug build, and wherever the layout's own invariants
+        // are switched on.
+        if cfg!(debug_assertions) || zgui_layout::invariants::enabled() {
+            for (position, child) in children.iter().enumerate() {
+                if !range.contains(&position) {
+                    let reached = self
+                        .subtree_ink(*child)
+                        .is_some_and(|ink| self.reaches(ink));
+                    assert!(
+                        !reached,
+                        "the child index dropped child {position} of {parent:?}, which the \
+                         damage reaches"
+                    );
+                }
+            }
+        }
+        Some(range)
+    }
+
     fn descends(&mut self, _store: &LayoutStore, key: BoxKey) -> bool {
         // The refusal `enter` makes for the root, asked before the box is ranked among its
         // siblings so a skipped subtree costs its ink test and nothing else. `enter` trusts a

@@ -167,6 +167,15 @@ impl Plan {
 }
 
 impl HighlightSource for Plan {
+    fn marked(&self) -> Option<Vec<zgui_dom::side::BoxKey>> {
+        Some(
+            self.owner
+                .filter(|_| !self.marks.is_empty())
+                .into_iter()
+                .collect(),
+        )
+    }
+
     fn fingerprint(&self, owner: zgui_dom::side::BoxKey, paragraph: ParagraphId, line: u16) -> u64 {
         // Two boxes that hold the same text share one paragraph; the owner tells them apart.
         if self.owner != Some(owner) || self.paragraph != Some(paragraph) {

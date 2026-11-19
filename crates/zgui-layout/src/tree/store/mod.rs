@@ -68,6 +68,8 @@ pub struct LayoutStore {
     boxes: ChunkArena<BoxNode>,
     /// One entry per box, holding the engine's cache and the box's result.
     layout: PagedVec<BoxKey, Option<BoxLayout>, 64>,
+    /// The last value [`LayoutStore::child_ink_revision`] handed out.
+    next_child_ink_revision: u64,
     /// Intrinsics and identifiers held only by replaced boxes.
     replaced: PagedVec<BoxKey, Option<ReplacedBox>, 64>,
     /// Registry references held only by custom boxes.
@@ -221,6 +223,7 @@ impl LayoutStore {
         Self {
             boxes: ChunkArena::new(box_domain),
             layout: PagedVec::for_domain(box_domain),
+            next_child_ink_revision: 0,
             replaced: PagedVec::for_domain(box_domain),
             custom: PagedVec::for_domain(box_domain),
             declared: PagedVec::for_domain(box_domain),

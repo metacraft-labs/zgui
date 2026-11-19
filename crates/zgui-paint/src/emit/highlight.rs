@@ -85,6 +85,15 @@ pub trait HighlightSource {
         request: HighlightRequest,
         visit: &mut dyn FnMut(Highlight),
     );
+
+    /// Every box whose lines this source draws over, or `None` when the source cannot say.
+    ///
+    /// A mark can reach past the ink its line was laid out with, so the emit walk asks the
+    /// children of a box with marks below it one by one. A source that answers `None` has that
+    /// done everywhere.
+    fn marked(&self) -> Option<Vec<BoxKey>> {
+        None
+    }
 }
 
 /// A source that draws no caret and no selection anywhere.
@@ -97,6 +106,10 @@ pub struct NoHighlights;
 impl HighlightSource for NoHighlights {
     fn fingerprint(&self, _owner: BoxKey, _paragraph: ParagraphId, _line: u16) -> u64 {
         0
+    }
+
+    fn marked(&self) -> Option<Vec<BoxKey>> {
+        Some(Vec::new())
     }
 
     fn visit_line(

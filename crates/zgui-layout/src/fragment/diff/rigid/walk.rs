@@ -138,6 +138,9 @@ impl<'a, 'b, D: FrameDirty> Walk<'a, 'b, D> {
             self.subtree_from::<T>(child, inner, inner_shift, frontier);
             position += 1;
         }
+        if T::MOVES && position > 0 {
+            self.store.touch_child_inks(key);
+        }
     }
 
     /// Offsets the box's own piece and returns the chain its contents are drawn under.
