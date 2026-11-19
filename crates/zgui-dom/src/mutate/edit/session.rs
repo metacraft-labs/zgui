@@ -26,6 +26,7 @@
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::mutate::hints::HintLog;
 use crate::mutate::snapshot::SnapshotStore;
@@ -60,6 +61,12 @@ pub(crate) struct Batch {
     pub(crate) detached: Vec<crate::id::node_key::NodeIndex>,
 }
 
+/// What a document calls when a change made outside a frame needs a frame to show it.
+///
+/// Called from inside the batch that made the change, on the thread that made it, so it must not
+/// change the document. The conventional hook pings the event loop and returns.
+pub type RedrawHook = Arc<dyn Fn() + Send + Sync>;
+
 /// Everything a document needs to accept changes through a shared reference.
 pub struct EditState {
     /// The open batch's scratch.
@@ -74,6 +81,12 @@ pub struct EditState {
     in_frame: AtomicBool,
     /// Whether a change arrived during a frame, so another one is owed after it.
     another_frame: AtomicBool,
+    /// Who is told when a change made outside a frame needs one.
+    ///
+    /// A change made between frames — by code running on its own schedule, or by work handed over
+    /// from another thread — is shown only by a frame that something asks for. The frame driver
+    /// installs this so that such a change asks for it.
+    redraw_hook: std::sync::RwLock<Option<RedrawHook>>,
     /// The next listener identity to hand out. Never rewound, so an identity is never reused and
     /// a handler removed mid-dispatch cannot be confused with one registered afterwards.
     next_listener: AtomicU64,
@@ -96,6 +109,7 @@ impl EditState {
             redraw: AtomicBool::new(false),
             in_frame: AtomicBool::new(false),
             another_frame: AtomicBool::new(false),
+            redraw_hook: std::sync::RwLock::new(None),
             next_listener: AtomicU64::new(1),
         }
     }
@@ -162,11 +176,27 @@ impl EditState {
     /// During a frame this instead records that another frame is owed, because the stage that ends
     /// a frame is the one place a redraw request can be issued without producing a second, empty
     /// frame for every stage that asked.
+    ///
+    /// Outside a frame, the first request since the last frame began calls the redraw hook, so
+    /// the frame driver asks for the frame once however many changes are made before it runs.
     pub(crate) fn request_redraw(&self) {
         if self.in_frame.load(Ordering::Relaxed) {
             self.another_frame.store(true, Ordering::Relaxed);
-        } else {
-            self.redraw.store(true, Ordering::Relaxed);
+        } else if !self.redraw.swap(true, Ordering::Relaxed) {
+            let hook = self
+                .redraw_hook
+                .read()
+                .map_or(None, |hook| hook.as_ref().map(Arc::clone));
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+    }
+
+    /// Installs the redraw hook, replacing any earlier one.
+    pub(crate) fn set_redraw_hook(&self, hook: Option<RedrawHook>) {
+        if let Ok(mut held) = self.redraw_hook.write() {
+            *held = hook;
         }
     }
 
@@ -184,6 +214,9 @@ impl EditState {
     pub(crate) fn begin_frame(&self) {
         self.in_frame.store(true, Ordering::Relaxed);
         self.another_frame.store(false, Ordering::Relaxed);
+        // The frame that begins services every change made before it, so the next change made
+        // outside a frame asks for a frame again.
+        self.redraw.store(false, Ordering::Relaxed);
     }
 
     /// Records that everything changed so far is about to be serviced by the frame in flight.

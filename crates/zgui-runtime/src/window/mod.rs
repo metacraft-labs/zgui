@@ -626,6 +626,15 @@ impl Window {
                 Arc::clone(&replaced_surfaces),
             ]),
         ));
+        // A change made outside a frame — from code the application runs on its own schedule,
+        // or from work handed over from another thread — asks for the frame that shows it.
+        {
+            let waker = Arc::clone(&waker);
+            let surface_id = surface.id();
+            document
+                .borrow()
+                .set_redraw_hook(Arc::new(move || waker.wake_surface(surface_id)));
+        }
         let dom = Rc::new(DocumentDom::new(Rc::clone(&document)));
         // The atlas may create textures as large as the device allows, so a photo the device can
         // hold is cached whole rather than clamped to the smallest supported device's limit.

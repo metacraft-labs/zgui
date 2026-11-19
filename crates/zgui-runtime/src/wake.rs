@@ -135,6 +135,21 @@ impl RuntimeWaker {
     }
 }
 
+impl RuntimeWaker {
+    /// Asks for a frame of one surface: from outside a frame, through the platform; from inside
+    /// one, as the frame that is owed when it ends.
+    ///
+    /// A document's redraw hook calls this, for the window it belongs to.
+    pub fn wake_surface(&self, surface: SurfaceId) {
+        if self.gate.request() {
+            return;
+        }
+        self.platform.wake(WakeReason::ReactiveWork {
+            surfaces: vec![surface].into_boxed_slice(),
+        });
+    }
+}
+
 impl FrameWaker for RuntimeWaker {
     fn wake(&self) {
         if self.gate.request() {

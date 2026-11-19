@@ -87,6 +87,7 @@ pub use crate::host::{
     SheetLoader, SheetRequest,
 };
 pub use crate::id::{DocumentId, NodeIndex, NodeKey, OptIndex};
+pub use crate::mutate::edit::session::RedrawHook;
 pub use crate::mutate::{Edit, EverythingMatters, Poisoned, SnapshotStore, StyleFilter};
 pub use crate::node::discipline::CellDisciplined;
 pub use crate::node::inner::NodeInner;

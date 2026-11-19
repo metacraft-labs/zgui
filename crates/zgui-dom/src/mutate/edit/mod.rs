@@ -194,6 +194,20 @@ impl Document {
         self.edit_state().take_redraw_request()
     }
 
+    /// Installs what is called when a change made outside a frame needs a frame to show it.
+    ///
+    /// Whoever drives frames installs this and asks the event loop for a frame from it. Without a
+    /// hook such a change waits for the next frame something else asks for. See
+    /// [`RedrawHook`](crate::RedrawHook) for what the hook may do.
+    pub fn set_redraw_hook(&self, hook: crate::RedrawHook) {
+        self.edit_state().set_redraw_hook(Some(hook));
+    }
+
+    /// Removes the redraw hook.
+    pub fn clear_redraw_hook(&self) {
+        self.edit_state().set_redraw_hook(None);
+    }
+
     /// Records that a frame is being produced.
     ///
     /// While a frame is in flight a change records that *another* frame is owed rather than asking
