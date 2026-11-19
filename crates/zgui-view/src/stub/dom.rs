@@ -378,6 +378,24 @@ impl Dom for StubDom {
         self.tree.borrow().nodes.get(&node)?.parent
     }
 
+    fn first_child(&self, node: NodeId) -> Option<NodeId> {
+        self.tree
+            .borrow()
+            .nodes
+            .get(&node)?
+            .children
+            .first()
+            .copied()
+    }
+
+    fn next_sibling(&self, node: NodeId) -> Option<NodeId> {
+        let tree = self.tree.borrow();
+        let parent = tree.nodes.get(&node)?.parent?;
+        let siblings = &tree.nodes.get(&parent)?.children;
+        let at = siblings.iter().position(|sibling| *sibling == node)?;
+        siblings.get(at + 1).copied()
+    }
+
     fn set_attribute(&self, el: NodeId, name: AttrName, value: Option<&str>) {
         self.check(el);
         if let Some(record) = self.tree.borrow_mut().nodes.get_mut(&el) {
@@ -390,6 +408,16 @@ impl Dom for StubDom {
                 }
             }
         }
+    }
+
+    fn attribute(&self, el: NodeId, name: AttrName) -> Option<String> {
+        self.tree
+            .borrow()
+            .nodes
+            .get(&el)?
+            .attributes
+            .get(&name)
+            .cloned()
     }
 
     fn set_classes(&self, el: NodeId, classes: &[ClassName]) {
@@ -574,5 +602,30 @@ impl Dom for StubDom {
                 tree.borrow_mut().observations.remove(&key);
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zgui_interned::ElementName;
+
+    use super::StubDom;
+    use crate::{DocumentId, Dom};
+
+    #[test]
+    fn children_are_listed_one_step_at_a_time() {
+        let dom = StubDom::new(DocumentId::FIRST);
+        let row = dom.create_element(ElementName::new("row"));
+        let a = dom.create_text("a");
+        let b = dom.create_text("b");
+        assert_eq!(dom.first_child(row), None);
+        dom.insert(row, b, None);
+        dom.insert(row, a, Some(b));
+        assert_eq!(dom.first_child(row), Some(a));
+        assert_eq!(dom.next_sibling(a), Some(b));
+        assert_eq!(dom.next_sibling(b), None);
+        dom.detach(a);
+        assert_eq!(dom.first_child(row), Some(b));
+        assert_eq!(dom.next_sibling(a), None);
     }
 }

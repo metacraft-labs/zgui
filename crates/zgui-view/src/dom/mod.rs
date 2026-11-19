@@ -5,6 +5,7 @@
 //! document, a browser's own nodes and a transcript recorder are all "a `Dom`", and no view type,
 //! no attribute, no component and no error message mentions which one is installed.
 
+mod error;
 mod handle;
 mod listener_id;
 mod observe;
@@ -18,6 +19,7 @@ use zgui_vocab::{EventKind, ListenerOptions, PropKey, PropValue, Semantics, UiSt
 use crate::event::EventCx;
 use crate::id::NodeId;
 
+pub use crate::dom::error::DomError;
 pub use crate::dom::handle::DomHandle;
 pub use crate::dom::listener_id::ListenerId;
 pub use crate::dom::observe::{ObservationHandle, ObservationSink, Observed, ObservedValue};
@@ -85,11 +87,44 @@ pub trait Dom {
     /// Puts `child` under `parent`, immediately before `before`, or last when `before` is `None`.
     fn insert(&self, parent: NodeId, child: NodeId, before: Option<NodeId>);
 
+    /// [`Dom::insert`], refusing with an error rather than panicking when the call is not valid.
+    ///
+    /// A refused call leaves the tree as it was. The default accepts every call, which is right
+    /// for a backend whose `insert` cannot fail.
+    fn try_insert(
+        &self,
+        parent: NodeId,
+        child: NodeId,
+        before: Option<NodeId>,
+    ) -> Result<(), DomError> {
+        self.insert(parent, child, before);
+        Ok(())
+    }
+
+    /// [`Dom::set_text`], refusing with an error when `node` is gone or is not a text node.
+    ///
+    /// The default accepts every call.
+    fn try_set_text(&self, node: NodeId, data: &str) -> Result<(), DomError> {
+        self.set_text(node, data);
+        Ok(())
+    }
+
     /// Removes `node` from its parent, leaving it usable.
     fn detach(&self, node: NodeId);
 
     /// The node `node` currently sits under.
     fn parent(&self, node: NodeId) -> Option<NodeId>;
+
+    /// The first node under `node`, in sibling order.
+    ///
+    /// `None` for a node with no children, and for a node that no longer exists. Markers take part
+    /// in sibling order, so a marker can be the answer.
+    fn first_child(&self, node: NodeId) -> Option<NodeId>;
+
+    /// The node that follows `node` under the same parent.
+    ///
+    /// `None` for the last child, for a detached node, and for a node that no longer exists.
+    fn next_sibling(&self, node: NodeId) -> Option<NodeId>;
 
     /// Whether `node` still exists in this tree.
     ///
@@ -99,6 +134,11 @@ pub trait Dom {
 
     /// Sets or removes one attribute, which is visible to selector matching.
     fn set_attribute(&self, el: NodeId, name: AttrName, value: Option<&str>);
+
+    /// The value of one of `el`'s attributes, as the last write left it.
+    ///
+    /// `None` for an attribute that is not set and for a node that no longer exists.
+    fn attribute(&self, el: NodeId, name: AttrName) -> Option<String>;
 
     /// Replaces the whole class list.
     fn set_classes(&self, el: NodeId, classes: &[ClassName]);
@@ -148,6 +188,19 @@ pub trait Dom {
         options: ListenerOptions,
         handler: Rc<dyn Fn(&mut EventCx<'_>)>,
     ) -> ListenerId;
+
+    /// [`Dom::add_listener`], refusing with an error when `el` is gone.
+    ///
+    /// The default accepts every call.
+    fn try_add_listener(
+        &self,
+        el: NodeId,
+        event: EventKind,
+        options: ListenerOptions,
+        handler: Rc<dyn Fn(&mut EventCx<'_>)>,
+    ) -> Result<ListenerId, DomError> {
+        Ok(self.add_listener(el, event, options, handler))
+    }
 
     /// Removes a registration [`Dom::add_listener`] returned.
     fn remove_listener(&self, el: NodeId, listener: ListenerId);

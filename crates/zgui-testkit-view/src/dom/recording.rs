@@ -200,6 +200,14 @@ impl Dom for RecordingDom {
         self.tree.parent(node)
     }
 
+    fn first_child(&self, node: NodeId) -> Option<NodeId> {
+        self.tree.first_child(node)
+    }
+
+    fn next_sibling(&self, node: NodeId) -> Option<NodeId> {
+        self.tree.next_sibling(node)
+    }
+
     fn set_attribute(&self, el: NodeId, name: AttrName, value: Option<&str>) {
         self.tree.set_attribute(el, name, value);
         self.transcript.push(Op::SetAttribute {
@@ -210,6 +218,10 @@ impl Dom for RecordingDom {
         if name.as_str() == "secure" {
             self.secure_changed(el);
         }
+    }
+
+    fn attribute(&self, el: NodeId, name: AttrName) -> Option<String> {
+        self.tree.attribute(el, name)
     }
 
     fn set_classes(&self, el: NodeId, classes: &[ClassName]) {

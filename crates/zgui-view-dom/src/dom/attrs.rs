@@ -5,7 +5,8 @@ use std::rc::Rc;
 use zgui_dom::NodeKind;
 use zgui_interned::{AttrName, ClassName, CustomPropertyName, ElementName, Ident};
 use zgui_view::{
-    Dom, EventCx, ListenerId, NodeId, ObservationHandle, ObservationSink, Observed, OverlayLayer,
+    Dom, DomError, EventCx, ListenerId, NodeId, ObservationHandle, ObservationSink, Observed,
+    OverlayLayer,
 };
 use zgui_vocab::{EventKind, ListenerOptions, PropKey, PropValue, Semantics, UiState};
 
@@ -29,7 +30,12 @@ impl Dom for DocumentDom {
     }
 
     fn set_text(&self, node: NodeId, data: &str) {
-        self.write_text(node, data);
+        // A node that is gone is left alone, as every writer does; one that is not a text node is
+        // refused before the batch opens, so the document stays usable.
+        match self.check_text(node) {
+            Ok(()) | Err(DomError::Gone(_)) => self.write_text(node, data),
+            Err(error) => panic!("refused a text write: {error}"),
+        }
     }
 
     fn text_is(&self, node: NodeId, data: &str) -> bool {
@@ -37,7 +43,29 @@ impl Dom for DocumentDom {
     }
 
     fn insert(&self, parent: NodeId, child: NodeId, before: Option<NodeId>) {
+        // Checked before the batch opens: a refused insertion panics here and leaves the document
+        // usable, where a panic inside the batch would poison it.
+        if let Err(error) = self.check_insert(parent, child, before) {
+            panic!("refused an insertion: {error}");
+        }
         self.link(parent, child, before);
+    }
+
+    fn try_insert(
+        &self,
+        parent: NodeId,
+        child: NodeId,
+        before: Option<NodeId>,
+    ) -> Result<(), DomError> {
+        self.check_insert(parent, child, before)?;
+        self.link(parent, child, before);
+        Ok(())
+    }
+
+    fn try_set_text(&self, node: NodeId, data: &str) -> Result<(), DomError> {
+        self.check_text(node)?;
+        self.write_text(node, data);
+        Ok(())
     }
 
     fn detach(&self, node: NodeId) {
@@ -46,6 +74,14 @@ impl Dom for DocumentDom {
 
     fn parent(&self, node: NodeId) -> Option<NodeId> {
         self.parent_of(node)
+    }
+
+    fn first_child(&self, node: NodeId) -> Option<NodeId> {
+        self.first_child_of(node)
+    }
+
+    fn next_sibling(&self, node: NodeId) -> Option<NodeId> {
+        self.next_sibling_of(node)
     }
 
     fn is_live(&self, node: NodeId) -> bool {
@@ -67,6 +103,11 @@ impl Dom for DocumentDom {
         let stored = value.map(Into::into);
         self.edit(|edit| edit.set_attribute(el, name, stored));
         self.note_attribute(el, name, value);
+    }
+
+    fn attribute(&self, el: NodeId, name: AttrName) -> Option<String> {
+        self.live_index_of(el)?;
+        Self::attribute(self, el, name)
     }
 
     fn set_classes(&self, el: NodeId, classes: &[ClassName]) {
@@ -165,6 +206,18 @@ impl Dom for DocumentDom {
         let id = self.edit(|edit| edit.add_listener(index, event, options));
         self.handlers().borrow_mut().insert(id, el, handler);
         ListenerId::new(id.get())
+    }
+
+    fn try_add_listener(
+        &self,
+        el: NodeId,
+        event: EventKind,
+        options: ListenerOptions,
+        handler: Rc<dyn Fn(&mut EventCx<'_>)>,
+    ) -> Result<ListenerId, DomError> {
+        self.check_live(el)?;
+        self.check_writable()?;
+        Ok(self.add_listener(el, event, options, handler))
     }
 
     fn remove_listener(&self, el: NodeId, listener: ListenerId) {

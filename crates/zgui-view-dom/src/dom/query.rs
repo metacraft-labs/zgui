@@ -95,9 +95,13 @@ impl DocumentDom {
     }
 
     /// Every character `node`'s subtree contributes, in order.
+    ///
+    /// Empty for a node that is gone.
     pub fn text_content(&self, node: NodeId) -> String {
+        let Some(index) = self.live_index_of(node) else {
+            return String::new();
+        };
         let document = self.document();
-        let index = id::resolve(&document, node);
         let mut text = String::new();
         collect_text(&document, index, &mut text);
         text
