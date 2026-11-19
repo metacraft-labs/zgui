@@ -280,7 +280,14 @@ impl Window {
         // the rest of them: space and enter activate whatever has focus, and a field that both
         // typed a space and clicked itself is neither. A key the editing model refused still falls
         // through, which is what leaves tab moving the focus out of a field.
-        let typed = dispatched.default_allowed && self.edit_focused(event, timestamp);
+        // The text a key inserts is announced to the focused element before the editing model
+        // types it, as the web's `beforeinput` is. A listener that prevents it keeps the text out
+        // and takes the key away from the framework's other behaviours, as typing it would have.
+        let text_allowed = !dispatched.default_allowed
+            || composing
+            || self.announce_inserted_text(event, modifiers, timestamp);
+        let typed =
+            dispatched.default_allowed && (!text_allowed || self.edit_focused(event, timestamp));
         // A key that arrives during a composition belongs to the composition even though the input
         // method did not consume it — the window system forwards every one of them. Left to take a
         // framework default it moves the focus or activates a control out from under provisional
@@ -364,6 +371,59 @@ impl Window {
         // surface identical to the one just presented. A handler whose work genuinely outlives the
         // frame — a task that finishes later, an effect scheduled from a callback — asks for
         // itself, from where it finishes.
+    }
+
+    /// Dispatches the text a key press inserts as a [`Text`](EventKind::Text) event on the
+    /// focused element.
+    ///
+    /// Only a press that inserts text and carries no control, alt or meta modifier is announced:
+    /// those modifiers make a key a command, which inserts nothing. Answers whether the text may
+    /// still be inserted, which is `true` when nothing was announced.
+    fn announce_inserted_text(
+        &mut self,
+        event: &SurfaceEvent,
+        modifiers: Modifiers,
+        timestamp: Timestamp,
+    ) -> bool {
+        let SurfaceEvent::Key {
+            state: zgui_vocab::KeyState::Pressed,
+            event: key,
+            ..
+        } = event
+        else {
+            return true;
+        };
+        if modifiers.control() || modifiers.alt() || modifiers.meta() {
+            return true;
+        }
+        let Some(text) = key.key.inserted_text() else {
+            return true;
+        };
+        let Some(node) = self.router.interaction().focus.focused() else {
+            return true;
+        };
+        let steps = {
+            let document = self.document.borrow();
+            let chain = zgui_input::HitChain::to_root(document.store(), node);
+            let mut plan = zgui_input::dispatch::Plan::default();
+            zgui_input::dispatch::resolve(document.store(), &chain, EventKind::Text, &mut plan);
+            plan.steps().to_vec()
+        };
+        let payload = Payload::Text(zgui_vocab::TextEvent::new(text));
+        let host = std::rc::Rc::clone(&self.host);
+        let mut sink = HostSink::new(&host);
+        dispatch::run(
+            self,
+            &steps,
+            EventKind::Text,
+            Some(node),
+            &payload,
+            &[],
+            modifiers,
+            timestamp,
+            &mut sink,
+        )
+        .default_allowed
     }
 
     /// Records the menu action a key press is the shortcut of.
