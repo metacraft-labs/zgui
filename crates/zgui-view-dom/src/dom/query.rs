@@ -38,8 +38,11 @@ impl DocumentDom {
             .collect()
     }
 
-    /// The value of one of `node`'s attributes.
+    /// The value of one of `node`'s attributes. `class` reads the class list, space-separated.
     pub fn attribute(&self, node: NodeId, name: AttrName) -> Option<String> {
+        if name.as_str() == "class" {
+            return crate::dom::attrs::class_attribute(&self.classes(node));
+        }
         let document = self.document();
         let index = id::resolve(&document, node);
         document

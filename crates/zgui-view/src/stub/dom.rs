@@ -411,13 +411,18 @@ impl Dom for StubDom {
     }
 
     fn attribute(&self, el: NodeId, name: AttrName) -> Option<String> {
-        self.tree
-            .borrow()
-            .nodes
-            .get(&el)?
-            .attributes
-            .get(&name)
-            .cloned()
+        let tree = self.tree.borrow();
+        let node = tree.nodes.get(&el)?;
+        if name.as_str() == "class" {
+            return (!node.classes.is_empty()).then(|| {
+                node.classes
+                    .iter()
+                    .map(|class| class.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            });
+        }
+        node.attributes.get(&name).cloned()
     }
 
     fn set_classes(&self, el: NodeId, classes: &[ClassName]) {

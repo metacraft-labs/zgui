@@ -139,7 +139,8 @@ pub trait Dom {
 
     /// The value of one of `el`'s attributes, as the last write left it.
     ///
-    /// `None` for an attribute that is not set and for a node that no longer exists.
+    /// `class` reads the class list, space-separated, as HTML's `class` attribute does. `None` for
+    /// an attribute that is not set and for a node that no longer exists.
     fn attribute(&self, el: NodeId, name: AttrName) -> Option<String>;
 
     /// Replaces the whole class list.

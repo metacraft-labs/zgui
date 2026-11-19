@@ -63,3 +63,35 @@ fn a_view_root_has_no_sibling_among_the_window_roots() {
     let root = dom.root(probe);
     assert_eq!(dom.next_sibling(root), None);
 }
+
+#[test]
+fn attributes_read_back_and_class_reads_the_class_list() {
+    let document = Rc::new(RefCell::new(Document::new()));
+    let dom = DocumentDom::new(Rc::clone(&document));
+    let el = dom.create_element(ElementName::new("box"));
+    dom.set_attribute(el, zgui_interned::AttrName::new("data-kind"), Some("info"));
+    dom.set_classes(
+        el,
+        &[
+            zgui_interned::ClassName::new("card"),
+            zgui_interned::ClassName::new("wide"),
+        ],
+    );
+    assert_eq!(
+        dom.attribute(el, zgui_interned::AttrName::new("data-kind")),
+        Some("info".to_owned())
+    );
+    assert_eq!(
+        dom.attribute(el, zgui_interned::AttrName::new("class")),
+        Some("card wide".to_owned())
+    );
+    assert_eq!(
+        dom.attribute(el, zgui_interned::AttrName::new("missing")),
+        None
+    );
+    dom.set_classes(el, &[]);
+    assert_eq!(
+        dom.attribute(el, zgui_interned::AttrName::new("class")),
+        None
+    );
+}

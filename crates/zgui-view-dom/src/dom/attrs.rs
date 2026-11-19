@@ -503,3 +503,14 @@ mod tests {
         );
     }
 }
+
+/// The class list as the `class` attribute spells it, or `None` for an element with no classes.
+pub(crate) fn class_attribute(classes: &[ClassName]) -> Option<String> {
+    (!classes.is_empty()).then(|| {
+        classes
+            .iter()
+            .map(|class| class.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
+}
