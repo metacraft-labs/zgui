@@ -639,8 +639,13 @@ impl WgpuRenderer {
         let asked = web_time::Instant::now();
         let presented = present::acquire(&self.presentation, &mut self.faults);
         // Measured around the call and nowhere else. It is the frame's slack seen from the inside:
-        // how much earlier than it needed to be the frame was started.
-        self.acquire_block = asked.elapsed();
+        // how much earlier than it needed to be the frame was started. Only a swap chain can make
+        // a frame wait. For a texture, the measured time is only thread scheduling, so it is zero.
+        self.acquire_block = if self.presentation.waits_to_acquire() {
+            asked.elapsed()
+        } else {
+            std::time::Duration::ZERO
+        };
         // What the compositor handed back is a buffer nothing in flight still reads, so this is
         // the one point in the frame where asking the device what it has finished with is free.
         self.gpu.reclaim();

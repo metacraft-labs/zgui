@@ -115,6 +115,13 @@ impl Presentation {
         }
     }
 
+    /// Whether the acquisition can make a frame wait.
+    ///
+    /// Only a swap chain hands out its images at the display's pace.
+    pub fn waits_to_acquire(&self) -> bool {
+        matches!(self, Self::Surface(_))
+    }
+
     /// Asks for something to copy this frame into.
     pub fn acquire(&self) -> Presented {
         match self {
