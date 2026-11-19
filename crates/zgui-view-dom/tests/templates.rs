@@ -161,6 +161,25 @@ fn a_paint_only_value_marks_a_repaint_and_no_restyle() {
         .dirty()
         .clear_own(Dirty::all());
 
+    // The first value is a declaration, so the computed style has a background to paint.
+    dom.set_paint(el, PaintProperty::BackgroundColor, Some("rgb(1, 2, 3)"));
+    assert!(
+        document
+            .borrow()
+            .store()
+            .columns()
+            .inline_style
+            .get(key)
+            .and_then(Option::as_ref)
+            .is_some()
+    );
+    document
+        .borrow()
+        .store()
+        .core(index)
+        .dirty()
+        .clear_own(Dirty::all());
+
     dom.set_paint(el, PaintProperty::BackgroundColor, Some("rgb(10, 20, 30)"));
     {
         let document = document.borrow();
@@ -174,20 +193,10 @@ fn a_paint_only_value_marks_a_repaint_and_no_restyle() {
             .get(key)
             .and_then(Option::as_ref);
         assert!(held.and_then(|over| over.background_color).is_some());
-        assert!(
-            document
-                .store()
-                .columns()
-                .inline_style
-                .get(key)
-                .and_then(Option::as_ref)
-                .is_none(),
-            "a paint-only value went through the cascade"
-        );
     }
 
-    // A value the painter cannot take on its own goes through the cascade instead.
-    dom.set_paint(el, PaintProperty::OutlineColor, Some("currentColor"));
+    // Removing it leaves nothing behind: no value composed and no declaration.
+    dom.set_paint(el, PaintProperty::BackgroundColor, None);
     assert!(
         document
             .borrow()
@@ -196,11 +205,13 @@ fn a_paint_only_value_marks_a_repaint_and_no_restyle() {
             .inline_style
             .get(key)
             .and_then(Option::as_ref)
-            .is_some()
+            .is_none_or(|block| {
+                let document = document.borrow();
+                let lock = document.store().lock().clone();
+                let guard = lock.read();
+                block.read_with(&guard).declarations().is_empty()
+            })
     );
-
-    // Removing it leaves nothing behind.
-    dom.set_paint(el, PaintProperty::BackgroundColor, None);
     assert!(
         document
             .borrow()

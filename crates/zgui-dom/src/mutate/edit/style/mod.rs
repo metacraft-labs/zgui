@@ -82,10 +82,12 @@ impl Edit<'_> {
 
     /// Sets or removes one paint-only value of `node` without computing its style again.
     ///
-    /// `property` is `background-color`, `opacity`, `border-color` or `outline-color`. The value is
-    /// written where the painter reads a running animation's values, composed over the element's
-    /// computed style at the moment it is painted, and the element owes a repaint and nothing
-    /// else: no restyle, no layout. A cheap animation running on the same property paints over it.
+    /// `property` is `background-color`, `opacity`, `border-color` or `outline-color`. The first
+    /// value is written as an inline declaration. Every later one is written where the painter
+    /// reads a running animation's values, composed over the element's computed style at the
+    /// moment it is painted, and the element owes a repaint and nothing else: no restyle, no
+    /// layout. A cheap animation running on the same property paints over it. Removing the value
+    /// removes the declaration too.
     ///
     /// Returns `false`, changing nothing, for another property, or for a value that is not an
     /// absolute colour (for the colours) or a number or percentage (for `opacity`). A caller falls
@@ -103,6 +105,16 @@ impl Edit<'_> {
                 None => return false,
             },
         };
+        // The first value goes through the cascade, as an inline declaration. Layout decides from
+        // the computed style whether a box paints anything at all, and a box whose style has no
+        // background is not drawn whatever is composed over it. Once the element declares the
+        // property, later values are composed over the declaration without a cascade.
+        if parsed.is_some() && !self.declares(node, property) {
+            return self.write_declaration(node, property, value).is_some();
+        }
+        if parsed.is_none() {
+            self.write_declaration(node, property, None);
+        }
         let store = self.store();
         let key = store.key_of(node);
         let slot = store.columns_mut().paint.get_mut(key);
@@ -124,6 +136,36 @@ impl Edit<'_> {
         *slot = (!over.is_empty()).then(|| Box::new(over));
         crate::mutate::ancestors::mark(self.store(), node, crate::Dirty::REPAINT);
         true
+    }
+
+    /// Whether `node`'s own declarations set `property` (for `border-color`, its top side).
+    fn declares(&mut self, node: NodeIndex, property: &str) -> bool {
+        let longhand = if property == "border-color" {
+            "border-top-color"
+        } else {
+            property
+        };
+        let Some(id) = parse::property_id(longhand) else {
+            return false;
+        };
+        let store = self.store();
+        let key = store.key_of(node);
+        let Some(block) = store
+            .columns()
+            .inline_style
+            .get(key)
+            .and_then(Option::as_ref)
+        else {
+            return false;
+        };
+        let lock = store.lock().clone();
+        let guard = lock.read();
+        let Some(longhand) = id.longhand_id() else {
+            return false;
+        };
+        block
+            .read_with(&guard)
+            .contains(style::properties::PropertyDeclarationId::Longhand(longhand))
     }
 
     /// Sets or removes one of `node`'s own declarations, leaving the others alone.

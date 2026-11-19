@@ -21,6 +21,9 @@ fn a_paint_only_value_repaints_without_restyling_or_laying_out() {
     dom.insert(dom.root_node(), el, None);
     harness.settle(8);
 
+    // The first value is a declaration; the ones after it are paint-only.
+    dom.set_paint(el, PaintProperty::BackgroundColor, Some("rgb(0, 64, 0)"));
+    harness.settle(8);
     let relaid = counter::get(Counter::NodesRelaidOut);
     dom.set_paint(el, PaintProperty::BackgroundColor, Some("rgb(0, 128, 0)"));
     assert_eq!(harness.settle(8), 1, "the value asked for no frame");
