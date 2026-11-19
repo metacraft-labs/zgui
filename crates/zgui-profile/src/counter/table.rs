@@ -146,6 +146,11 @@ counters! {
     /// space reaches every box in it.
     FragmentBoxesVisited => fragment_boxes_visited, Group::BackendNeutral;
 
+    /// Siblings the fragment pass read the painted order of, to place a newly indexed box between
+    /// its neighbours. One per child of every box the pass composes: a pass that read more is
+    /// scanning a sibling list once per child.
+    SiblingOrdersRead => sibling_orders_read, Group::BackendNeutral;
+
     /// Elements that took a moved custom property map into their style without a cascade.
     CustomMapsRefreshed => custom_maps_refreshed, Group::BackendNeutral;
 

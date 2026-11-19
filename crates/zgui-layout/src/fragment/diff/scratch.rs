@@ -21,6 +21,9 @@ use crate::fragment::{FragKey, FragmentKind};
 pub struct DiffScratch {
     /// The children of the box being visited, copied so the store borrow can end.
     pub(super) children: Vec<BoxKey>,
+    /// For each child in [`DiffScratch::children`], the first order key painted after it among
+    /// its later siblings, read before any of them is composed again.
+    pub(super) next_orders: Vec<crate::fragment::hit::HitOrder>,
     /// The ink of a box's later own pieces and of each child subtree.
     pub(super) child_inks: Vec<Rect<DevicePx, Device>>,
     /// What each fragment of the box being visited draws.

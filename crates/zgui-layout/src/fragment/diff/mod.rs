@@ -913,6 +913,20 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             &crate::fragment::stacking::children_in_paint_order(self.store, key),
         );
         let children_end = self.scratch.children.len();
+        // Each child's next painted sibling, worked out for all of them at once, back to front.
+        // Asked per child, a list being built for the first time — where no sibling indexes
+        // anything yet — scanned every later sibling for every child.
+        let orders_mark = self.scratch.next_orders.len();
+        self.scratch
+            .next_orders
+            .resize(orders_mark + (children_end - children_mark), between.1);
+        let mut next = between.1;
+        for index in (children_mark..children_end).rev() {
+            self.scratch.next_orders[orders_mark + (index - children_mark)] = next;
+            if let Some(first) = self.indexed_first(self.scratch.children[index]) {
+                next = first;
+            }
+        }
         let first_fragment = (!fragments.is_empty()).then(|| self.scratch.written[fragments.start]);
         let mut blending = placed.blends;
         let mut below = false;
@@ -964,7 +978,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             let child = self.scratch.children[index];
             let before = self.folded_reading(child);
             let clean = self.can_skip(child, owed.node);
-            let next = self.next_indexed_after(index + 1, children_end, between.1);
+            let next = self.scratch.next_orders[orders_mark + (index - children_mark)];
             let child_between = (cursor, next);
             let folded = match movement {
                 // Every shortcut below keeps the name of the coordinate system a child's pieces are
@@ -1091,6 +1105,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             self.store.touch_child_inks(key);
         }
         self.scratch.child_inks.truncate(inks_mark);
+        self.scratch.next_orders.truncate(orders_mark);
         self.scratch.children.truncate(children_mark);
         self.scratch.written.truncate(fragments.start);
         // A fixed box that hangs from a transformed or sticky box in the content space moves with
@@ -1253,25 +1268,17 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         self.hit.note_space_moved();
     }
 
-    /// The first order key painted after the child at `from` among this box's children, or
-    /// `after` when no later sibling indexes anything.
+    /// The first order key `sibling`'s subtree indexes, or `None` when it indexes nothing.
     ///
-    /// Read off the siblings' folded ranges from the last pass. A sibling about to be composed
+    /// Read off the sibling's folded range from the last pass. A sibling about to be composed
     /// again keeps a range that is still a sound upper bound: whatever it becomes is placed
     /// between the cursor and its own next sibling when its turn comes.
-    fn next_indexed_after(&self, from: usize, end: usize, after: HitOrder) -> HitOrder {
-        for index in from..end {
-            let sibling = self.scratch.children[index];
-            if let Some(&frag) = self.store.fragments_of_box(sibling).first()
-                && self.store.fragment(frag).is_some()
-            {
-                let first = self.store.subtree_order(sibling).0;
-                if first != HitOrder::MAX {
-                    return first;
-                }
-            }
-        }
-        after
+    fn indexed_first(&self, sibling: BoxKey) -> Option<HitOrder> {
+        counter::bump(Counter::SiblingOrdersRead);
+        let frag = *self.store.fragments_of_box(sibling).first()?;
+        self.store.fragment(frag)?;
+        let first = self.store.subtree_order(sibling).0;
+        (first != HitOrder::MAX).then_some(first)
     }
 
     /// How far this box's contents have moved, when that is all that happened to them.
