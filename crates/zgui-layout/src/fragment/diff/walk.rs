@@ -93,9 +93,25 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             return true;
         }
         let mark = self.scratch.children.len();
-        self.scratch.children.extend_from_slice(
-            &crate::fragment::stacking::children_in_paint_order(self.store, key),
-        );
+        // A long list asks only the children that may owe work; see [`super::sparse`].
+        match self.owing_children(key, owed.node) {
+            Some(owing) => {
+                if super::sparse::mode() == super::sparse::Mode::Shadow {
+                    for child in
+                        crate::fragment::stacking::children_in_paint_order(self.store, key).iter()
+                    {
+                        assert!(
+                            owing.contains(child) || self.can_skip(*child, owed.node),
+                            "the repaint walk of {key:?} left out {child:?}, which owes work"
+                        );
+                    }
+                }
+                self.scratch.children.extend_from_slice(&owing);
+            }
+            None => self.scratch.children.extend_from_slice(
+                &crate::fragment::stacking::children_in_paint_order(self.store, key),
+            ),
+        }
         let end = self.scratch.children.len();
         let mut served = true;
         for index in mark..end {

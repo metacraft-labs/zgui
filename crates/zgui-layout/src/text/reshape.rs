@@ -108,6 +108,7 @@ fn invalidate(store: &mut LayoutStore, key: BoxKey, reshape: &mut Reshape) {
     if let Some(resolution) = store.take_inline_resolution(key) {
         reshape.paragraphs.push(resolution.key);
     }
+    store.fresh.push(key);
     let state = store.state_mut(key);
     state.first_baseline = None;
     state.last_baseline = None;

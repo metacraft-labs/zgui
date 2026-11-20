@@ -39,6 +39,7 @@ mod geometry;
 mod rematrix;
 mod rigid;
 mod scratch;
+pub(crate) mod sparse;
 pub mod split;
 mod walk;
 
@@ -150,6 +151,13 @@ pub fn rebuild_in(
     // before *any* pass ran is the caller's to remember, because only the caller knows which pass
     // was the first.
     let bound = damage.bound();
+    let mut layout_moved: rustc_hash::FxHashMap<BoxKey, smallvec::SmallVec<[BoxKey; 2]>> =
+        rustc_hash::FxHashMap::default();
+    for moved in store.changed() {
+        if let Some(parent) = store.get(*moved).and_then(|node| node.parent) {
+            layout_moved.entry(parent).or_default().push(*moved);
+        }
+    }
     let mut pass = Pass {
         store,
         hit,
@@ -169,6 +177,7 @@ pub fn rebuild_in(
         chase: Chase::default(),
         resolved: [Cell::new(None), Cell::new(None)],
         proven: false,
+        layout_moved,
     };
     for (gone, anchor) in vacated {
         // Taken whole rather than cut to anything: the chain it was drawn under belongs to a frame
@@ -659,6 +668,8 @@ struct Pass<'a, 'b, D: FrameDirty> {
     resolved: [Cell<Option<Resolved>>; 2],
     /// Whether the repaint walk served this frame, so that composing it may change no fragment.
     proven: bool,
+    /// The children whose layout result moved in the last layout pass, by parent. See [`sparse`].
+    layout_moved: rustc_hash::FxHashMap<BoxKey, smallvec::SmallVec<[BoxKey; 2]>>,
 }
 
 /// One coordinate system's matrix, under the spatial tree's write stamp it was resolved at.
@@ -905,28 +916,6 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         // pieces once they are written, or whatever came before the box when it has none.
         let mut cursor = if order.1 > 0 { order.1 } else { between.0 };
 
-        // The children are walked in painting order. A box born anywhere below one of them is
-        // placed between the order keys of what was walked before it and the next sibling, so
-        // those have to be its neighbours in painting order.
-        let children_mark = self.scratch.children.len();
-        self.scratch.children.extend_from_slice(
-            &crate::fragment::stacking::children_in_paint_order(self.store, key),
-        );
-        let children_end = self.scratch.children.len();
-        // Each child's next painted sibling, worked out for all of them at once, back to front.
-        // Asked per child, a list being built for the first time — where no sibling indexes
-        // anything yet — scanned every later sibling for every child.
-        let orders_mark = self.scratch.next_orders.len();
-        self.scratch
-            .next_orders
-            .resize(orders_mark + (children_end - children_mark), between.1);
-        let mut next = between.1;
-        for index in (children_mark..children_end).rev() {
-            self.scratch.next_orders[orders_mark + (index - children_mark)] = next;
-            if let Some(first) = self.indexed_first(self.scratch.children[index]) {
-                next = first;
-            }
-        }
         let first_fragment = (!fragments.is_empty()).then(|| self.scratch.written[fragments.start]);
         let mut blending = placed.blends;
         let mut below = false;
@@ -969,118 +958,228 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             && movement.is_none()
             && (!moved || placed.descent.origin_stable)
             && rematrix::keeps_rectangles(placed.descent.matrix);
-        // Deeper visits append their own regions past `children_end` and truncate them again, so
-        // the indices walked here stay this box's children throughout.
-        // Whether any child's folded ink or anchor, or its set of pieces, changes in this visit,
-        // which is what moves this box's child ink revision.
         let mut child_inks_moved = false;
-        for index in children_mark..children_end {
-            let child = self.scratch.children[index];
-            let clean = self.can_skip(child, owed.node);
-            // A child the arm below takes from its cached fold keeps its pieces as they are, so
-            // its reading cannot move; only the others are read before and after.
-            let kept = space_stable
-                && settled
-                && clean
-                && !self.chases(child)
-                && (size_stable || self.can_translate(child));
-            let before = (!kept).then(|| self.folded_reading(child));
-            let next = self.scratch.next_orders[orders_mark + (index - children_mark)];
-            let child_between = (cursor, next);
-            let folded = match movement {
-                // Every shortcut below keeps the name of the coordinate system a child's pieces are
-                // drawn in. A box that gave its own system back or took one, or whose parent's
-                // system changed name, hands its children a different name, so they are composed
-                // again and take it. A kept name draws them in the wrong system, and a name given
-                // back stops resolving when the frame ends.
-                _ if !space_stable => self.visit(
-                    child,
-                    placed.descent,
-                    first_fragment,
-                    owed.node,
-                    child_between,
-                ),
-                // A sticky or fixed box below a content space that moved, or the path down to
-                // one: it does not move with the content.
-                _ if self.chases(child) => self.visit(
-                    child,
-                    placed.descent,
-                    first_fragment,
-                    owed.node,
-                    child_between,
-                ),
-                _ if settled && clean && (size_stable || self.can_translate(child)) => {
-                    self.cached(child)
+        let children_mark = self.scratch.children.len();
+        let orders_mark = self.scratch.next_orders.len();
+        // A long list whose box stood still is entered only where it owes work. See [`sparse`].
+        let plan = if settled
+            && space_stable
+            && size_stable
+            && content_moved.is_none()
+            && !self.chase.sticky
+            && !self.chase.fixed
+        {
+            let pieces: smallvec::SmallVec<[Rect<DevicePx, Device>; 2]> = self.scratch.child_inks
+                [inks_mark..]
+                .iter()
+                .copied()
+                .collect();
+            previous.and_then(|held| {
+                self.sparse_plan(key, owed.node, held.subtree_ink, ink, &pieces, into_anchor)
+            })
+        } else {
+            None
+        };
+        if plan.is_none()
+            && self
+                .store
+                .get(key)
+                .is_some_and(|node| node.children.len() >= sparse::SPARSE_FROM)
+        {
+            counter::bump(Counter::SparseDeclined);
+        }
+        if let Some(plan) = plan {
+            counter::bump(Counter::SparseVisits);
+            let entered = self.visit_sparse(
+                key,
+                plan,
+                &placed,
+                first_fragment,
+                owed.node,
+                (cursor, between.1),
+                previous_shift,
+                ink,
+            );
+            let folded = entered.aggregate;
+            subtree_ink = folded.subtree_ink;
+            blending |= folded.blending;
+            below = folded.reads;
+            disjoint = folded.disjoint;
+            rigid &= folded.rigid;
+            children_bound = folded.bound;
+            if let Some(range) = folded.order {
+                order = (order.0.min(range.0), order.1.max(range.1));
+            }
+            child_inks_moved = entered.moved;
+        } else {
+            // The children are walked in painting order. A box born anywhere below one of them is
+            // placed between the order keys of what was walked before it and the next sibling, so
+            // those have to be its neighbours in painting order.
+            self.scratch.children.extend_from_slice(
+                &crate::fragment::stacking::children_in_paint_order(self.store, key),
+            );
+            let children_end = self.scratch.children.len();
+            // Each child's next painted sibling, worked out for all of them at once, back to front.
+            // Asked per child, a list being built for the first time — where no sibling indexes
+            // anything yet — scanned every later sibling for every child.
+            self.scratch
+                .next_orders
+                .resize(orders_mark + (children_end - children_mark), between.1);
+            let mut next = between.1;
+            for index in (children_mark..children_end).rev() {
+                self.scratch.next_orders[orders_mark + (index - children_mark)] = next;
+                if let Some(first) = self.indexed_first(self.scratch.children[index]) {
+                    next = first;
                 }
-                _ if carried
+            }
+            // Deeper visits append their own regions past `children_end` and truncate them again, so
+            // the indices walked here stay this box's children throughout.
+            // The children's reports are kept for a later visit that enters only some of them.
+            // The box's own later pieces lead the child inks.
+            let pieces_end = self.scratch.child_inks.len();
+            let mut recording = (sparse::mode() != sparse::Mode::Off
+                && owed.node.is_some()
+                && children_end - children_mark >= sparse::SPARSE_FROM
+                && crate::fragment::stacking::children_in_layout_order(self.store, key))
+            .then(|| Vec::with_capacity(children_end - children_mark));
+            for index in children_mark..children_end {
+                let child = self.scratch.children[index];
+                counter::bump(Counter::FragmentChildrenAsked);
+                let clean = self.can_skip(child, owed.node);
+                // A child the arm below takes from its cached fold keeps its pieces as they are, so
+                // its reading cannot move; only the others are read before and after.
+                let kept = space_stable
+                    && settled
                     && clean
-                    && size_stable
-                    && self.drawn_under(child, placed.descent.clip) =>
-                {
-                    self.rematrix(child, placed.descent.matrix, placed.descent.fixed.matrix)
-                }
-                Some(movement) if clean && self.can_translate(child) => {
-                    self.translate(child, movement)
-                }
-                _ => match self.layout_shift(child, &placed, previous_shift, owed.node) {
-                    Some((shift, snapped)) => {
-                        // Adopted before the carry, so the walk finds every box below composed
-                        // from the result it holds — this one included.
-                        let state = self.store.state_mut(child);
-                        state.composed = state.unrounded;
-                        state.snapped = snapped;
-                        if shift.by == (0.0, 0.0) && shift.scrolled == (0.0, 0.0) {
-                            self.cached(child)
-                        } else {
-                            self.translate(child, shift)
-                        }
-                    }
-                    None => self.visit(
+                    && !self.chases(child)
+                    && (size_stable || self.can_translate(child));
+                let before = (!kept).then(|| self.folded_reading(child));
+                let next = self.scratch.next_orders[orders_mark + (index - children_mark)];
+                let child_between = (cursor, next);
+                let folded = match movement {
+                    // Every shortcut below keeps the name of the coordinate system a child's pieces are
+                    // drawn in. A box that gave its own system back or took one, or whose parent's
+                    // system changed name, hands its children a different name, so they are composed
+                    // again and take it. A kept name draws them in the wrong system, and a name given
+                    // back stops resolving when the frame ends.
+                    _ if !space_stable => self.visit(
                         child,
                         placed.descent,
                         first_fragment,
                         owed.node,
                         child_between,
                     ),
-                },
-            };
-            if let Some(before) = before {
-                child_inks_moved |= self.folded_reading(child) != before;
-            }
-            let mut folded = folded;
-            match folded.anchor {
-                // A fixed box inside a content space measures its ink where it hangs from.
-                Some(anchor) if anchor != placed.descent.anchor => {
-                    folded.subtree_ink = self.reanchor(folded.subtree_ink, anchor, placed.anchor);
+                    // A sticky or fixed box below a content space that moved, or the path down to
+                    // one: it does not move with the content.
+                    _ if self.chases(child) => self.visit(
+                        child,
+                        placed.descent,
+                        first_fragment,
+                        owed.node,
+                        child_between,
+                    ),
+                    _ if settled && clean && (size_stable || self.can_translate(child)) => {
+                        self.cached(child)
+                    }
+                    _ if carried
+                        && clean
+                        && size_stable
+                        && self.drawn_under(child, placed.descent.clip) =>
+                    {
+                        self.rematrix(child, placed.descent.matrix, placed.descent.fixed.matrix)
+                    }
+                    Some(movement) if clean && self.can_translate(child) => {
+                        self.translate(child, movement)
+                    }
+                    _ => match self.layout_shift(child, &placed, previous_shift, owed.node) {
+                        Some((shift, snapped)) => {
+                            // Adopted before the carry, so the walk finds every box below composed
+                            // from the result it holds — this one included.
+                            let state = self.store.state_mut(child);
+                            state.composed = state.unrounded;
+                            state.snapped = snapped;
+                            if shift.by == (0.0, 0.0) && shift.scrolled == (0.0, 0.0) {
+                                self.cached(child)
+                            } else {
+                                self.translate(child, shift)
+                            }
+                        }
+                        None => self.visit(
+                            child,
+                            placed.descent,
+                            first_fragment,
+                            owed.node,
+                            child_between,
+                        ),
+                    },
+                };
+                if let Some(before) = before {
+                    child_inks_moved |= self.folded_reading(child) != before;
                 }
-                _ => {
-                    if let Some(by) = into_anchor {
-                        folded.subtree_ink = folded.subtree_ink.translate(by);
+                let mut folded = folded;
+                match folded.anchor {
+                    // A fixed box inside a content space measures its ink where it hangs from.
+                    Some(anchor) if anchor != placed.descent.anchor => {
+                        folded.subtree_ink =
+                            self.reanchor(folded.subtree_ink, anchor, placed.anchor);
+                    }
+                    _ => {
+                        if let Some(by) = into_anchor {
+                            folded.subtree_ink = folded.subtree_ink.translate(by);
+                        }
                     }
                 }
+                self.scratch.child_inks.push(folded.subtree_ink);
+                if let Some(entries) = recording.as_mut() {
+                    entries.push(sparse::Entry::of(&folded));
+                }
+                blending |= folded.blending;
+                below |= folded.reads;
+                disjoint &= folded.disjoint;
+                rigid &= folded.rigid;
+                children_bound = children_bound.union(folded.bound);
+                subtree_ink = subtree_ink.union(folded.subtree_ink);
+                if folded.order.1 > 0 {
+                    cursor = cursor.max(folded.order.1);
+                    order = (order.0.min(folded.order.0), order.1.max(folded.order.1));
+                }
             }
-            self.scratch.child_inks.push(folded.subtree_ink);
-            blending |= folded.blending;
-            below |= folded.reads;
-            disjoint &= folded.disjoint;
-            rigid &= folded.rigid;
-            children_bound = children_bound.union(folded.bound);
-            subtree_ink = subtree_ink.union(folded.subtree_ink);
-            if folded.order.1 > 0 {
-                cursor = cursor.max(folded.order.1);
-                order = (order.0.min(folded.order.0), order.1.max(folded.order.1));
+
+            // `own ink disjoint from everything below it, everything below it pairwise disjoint, and
+            // every child disjoint in itself` — where "everything below it" is this box's own later
+            // pieces as well as its children's subtrees, because in the fragment tree those pieces are
+            // children of the box's own fragment. Answered over ink, which is layout geometry, so no
+            // damage set and no emission decision is an input to it: a frame that painted half the
+            // subtree decides exactly what a frame that painted all of it decides.
+            let child_inks = &self.scratch.child_inks[inks_mark..];
+            disjoint &= !child_inks.iter().any(|child| overlaps(ink, *child));
+            disjoint &= pairwise_disjoint(child_inks);
+
+            match recording {
+                Some(entries) => {
+                    let keys = self.scratch.children[children_mark..children_end].to_vec();
+                    let readers = self.readers_of(key, owed.node);
+                    match (readers.len() < sparse::SPARSE_FROM / 4)
+                        .then(|| {
+                            let pieces = &self.scratch.child_inks[inks_mark..pieces_end];
+                            sparse::ChildFold::new(ink, pieces, into_anchor, keys, entries, readers)
+                        })
+                        .flatten()
+                    {
+                        Some(mut fold) => {
+                            fold.set_total(subtree_ink);
+                            self.store.child_folds.insert(key, fold);
+                        }
+                        None => {
+                            self.store.child_folds.remove(&key);
+                        }
+                    }
+                }
+                None => {
+                    self.store.child_folds.remove(&key);
+                }
             }
         }
-
-        // `own ink disjoint from everything below it, everything below it pairwise disjoint, and
-        // every child disjoint in itself` — where "everything below it" is this box's own later
-        // pieces as well as its children's subtrees, because in the fragment tree those pieces are
-        // children of the box's own fragment. Answered over ink, which is layout geometry, so no
-        // damage set and no emission decision is an input to it: a frame that painted half the
-        // subtree decides exactly what a frame that painted all of it decides.
-        let child_inks = &self.scratch.child_inks[inks_mark..];
-        disjoint &= !child_inks.iter().any(|child| overlaps(ink, *child));
-        disjoint &= pairwise_disjoint(child_inks);
 
         self.chase = here;
         // A scroll container is the port of the sticky boxes below it, so it stops STICKY_BELOW.

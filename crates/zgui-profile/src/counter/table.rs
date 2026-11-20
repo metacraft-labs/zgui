@@ -146,6 +146,29 @@ counters! {
     /// space reaches every box in it.
     FragmentBoxesVisited => fragment_boxes_visited, Group::BackendNeutral;
 
+    /// Children the fragment pass asked whether they owe work, whether it then entered them or
+    /// took their cached fold.
+    FragmentChildrenAsked => fragment_children_asked, Group::BackendNeutral;
+
+    /// Visits of a box with many children that entered only the children owing work.
+    SparseVisits => sparse_visits, Group::BackendNeutral;
+
+    /// Visits of a box with many children that asked every child: the box moved, or its record
+    /// was missing or stale, or the document could not name its dirty children.
+    SparseDeclined => sparse_declined, Group::BackendNeutral;
+
+    /// Declined sparse visits of a box that held no record of its children.
+    SparseNoRecord => sparse_no_record, Group::BackendNeutral;
+
+    /// Declined sparse visits of a box whose record no longer described it.
+    SparseStale => sparse_stale, Group::BackendNeutral;
+
+    /// Declined sparse visits of a box whose element could not name its dirty children.
+    SparseUnnamed => sparse_unnamed, Group::BackendNeutral;
+
+    /// Sparse visits whose record could not be updated exactly, so every child was folded again.
+    SparseRefolds => sparse_refolds, Group::BackendNeutral;
+
     /// Siblings the fragment pass read the painted order of, to place a newly indexed box between
     /// its neighbours. One per child of every box the pass composes: a pass that read more is
     /// scanning a sibling list once per child.
@@ -672,6 +695,21 @@ counters! {
 
     /// Cascades of a restyle that the memo cannot answer.
     CascadeMemoSkips => cascade_memo_skips, Group::BackendNeutral;
+
+    /// Of [`Counter::SelectorMatches`], the questions asked to key an element for the match cache.
+    SelectorMatchesKeying => selector_matches_keying, Group::BackendNeutral;
+
+    /// Of [`Counter::SelectorMatches`], the questions asked while matching an element's rules.
+    SelectorMatchesMatching => selector_matches_matching, Group::BackendNeutral;
+
+    /// Elements whose selector matching the match cache answered.
+    MatchCacheHits => match_cache_hits, Group::BackendNeutral;
+
+    /// Elements the match cache could answer for and did not hold a match for.
+    MatchCacheMisses => match_cache_misses, Group::BackendNeutral;
+
+    /// Elements the match cache cannot answer for.
+    MatchCacheSkips => match_cache_skips, Group::BackendNeutral;
 
     /// Fragment passes that followed repaint marks and composed nothing.
     RepaintWalks => repaint_walks, Group::BackendNeutral;

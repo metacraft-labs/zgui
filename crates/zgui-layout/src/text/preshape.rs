@@ -104,9 +104,61 @@ pub fn collect<C: MeasureContent>(tree: &mut LayoutTree<'_, C>) -> PreShapeJobs 
 
 /// Every dirty box that establishes an inline formatting context.
 ///
-/// Dirtiness is upward-closed, so a clean box has a clean subtree and the walk skips it whole;
-/// the cost is the dirty region and the clean boxes on its edge, never the document.
+/// Found from the boxes the store lists as marked or made since the last pass, so the cost is the
+/// change: a walk from the root would also ask every clean child of every dirty box, which for a
+/// list is every row. In a debug build, and whenever the layout invariants are checked, the answer
+/// is compared with the walk's.
 fn dirty_inline_boxes(store: &LayoutStore) -> Vec<BoxKey> {
+    if store.all_dirty {
+        return walk_dirty_inline_boxes(store);
+    }
+    let found = listed_dirty_inline_boxes(store);
+    if cfg!(debug_assertions) || crate::invariants::enabled() {
+        let mut listed = found.clone();
+        let mut walked = walk_dirty_inline_boxes(store);
+        listed.sort_unstable();
+        walked.sort_unstable();
+        assert_eq!(
+            listed, walked,
+            "the listed dirty inline boxes differ from the ones a walk finds"
+        );
+    }
+    found
+}
+
+/// The dirty boxes that establish an inline formatting context, among the boxes the store lists
+/// as marked or made since the last pass.
+fn listed_dirty_inline_boxes(store: &LayoutStore) -> Vec<BoxKey> {
+    let mut out = Vec::new();
+    let mut seen = rustc_hash::FxHashSet::default();
+    for &key in store.chain.iter().chain(store.fresh.iter()) {
+        if !seen.insert(key) || !store.contains(key) || !reachable(store, key) {
+            continue;
+        }
+        let node = store.node(key);
+        if node.fc == FormattingContext::Inline && node.parent_fc != FormattingContext::Inline {
+            out.push(key);
+        }
+    }
+    out
+}
+
+/// Whether a walk from the root reaches `key`: it and every box above it are dirty, up to the root.
+fn reachable(store: &LayoutStore, key: BoxKey) -> bool {
+    let mut at = key;
+    loop {
+        if !crate::tree::dirty::is_dirty(store, at) {
+            return false;
+        }
+        match store.get(at).and_then(|node| node.parent) {
+            Some(parent) => at = parent,
+            None => return store.root() == Some(at),
+        }
+    }
+}
+
+/// The same boxes, found by walking from the root through the dirty boxes.
+fn walk_dirty_inline_boxes(store: &LayoutStore) -> Vec<BoxKey> {
     let Some(root) = store.root() else {
         return Vec::new();
     };

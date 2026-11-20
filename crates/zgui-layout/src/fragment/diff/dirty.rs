@@ -76,6 +76,18 @@ pub trait FrameDirty {
         self.mark(node, Dirty::A11Y);
     }
 
+    /// The children of `node` that may owe work, as a superset of the ones that do, or `None`
+    /// when the answer is every child or is not known.
+    ///
+    /// Answering `None` is always safe: the pass then asks every child.
+    fn dirty_children(
+        &self,
+        node: zgui_dom::NodeKey,
+    ) -> Option<smallvec::SmallVec<[zgui_dom::NodeKey; 8]>> {
+        let _ = node;
+        None
+    }
+
     /// Forgets `phase` at and below `node`, the pass having just serviced it.
     ///
     /// The pass that reads a phase is the only thing that can retire it, because it is the only
@@ -227,6 +239,23 @@ impl FrameDirty for DocumentMarks<'_> {
             Some(index) => self.store.core(index).dirty().subtree(),
             None => Dirty::all(),
         }
+    }
+
+    fn dirty_children(
+        &self,
+        node: zgui_dom::NodeKey,
+    ) -> Option<smallvec::SmallVec<[zgui_dom::NodeKey; 8]>> {
+        let index = self.store.index_of(node)?;
+        let record = self.store.core(index).dirty_children();
+        if record.is_all() {
+            return None;
+        }
+        Some(
+            record
+                .iter(self.store, index)
+                .map(|child| self.store.key_of(child))
+                .collect(),
+        )
     }
 
     fn mark(&mut self, node: Option<zgui_dom::NodeKey>, bits: Dirty) {

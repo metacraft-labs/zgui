@@ -96,6 +96,7 @@ pub fn mark_all_dirty(store: &mut LayoutStore) -> u32 {
     // so a pass that compared viewports alone would find them equal and hold a document laid out at
     // the previous ratio.
     store.forget_root_layout();
+    store.all_dirty = true;
     let keys = store.keys();
     let mut marked = 0;
     for key in keys {

@@ -125,3 +125,62 @@ fn a_label_change_in_a_long_list_visits_nodes_bounded_by_the_change() {
         "a change after a resize visited {after_resize} nodes"
     );
 }
+
+/// What the next settle costs the layout and fragment passes, after `change` runs: the boxes
+/// laid out again and the children the fragment pass asked.
+fn passes_work(
+    harness: &mut zgui_platform_headless::Harness<zgui_runtime::Runtime>,
+    change: impl FnOnce(&zgui_view_dom::DocumentDom),
+) -> (u64, u64) {
+    let dom = std::rc::Rc::clone(harness.app().windows()[0].dom());
+    let relaid = counter::get(Counter::NodesRelaidOut);
+    let asked = counter::get(Counter::FragmentChildrenAsked);
+    change(&dom);
+    assert_eq!(harness.settle(16), 1, "the change ran no frame");
+    (
+        counter::get(Counter::NodesRelaidOut) - relaid,
+        counter::get(Counter::FragmentChildrenAsked) - asked,
+    )
+}
+
+#[test]
+fn a_label_change_in_a_long_list_lays_out_and_composes_work_bounded_by_the_change() {
+    let (mut short, _, short_texts) = list(300);
+    let (mut long, pane, long_texts) = list(3_000);
+    // The first change after building records what the next one reads; the later ones are
+    // measured, a label growing and then shrinking inside its row.
+    passes_work(&mut short, |dom| dom.set_text(short_texts[150], "warm"));
+    passes_work(&mut long, |dom| dom.set_text(long_texts[1_500], "warm"));
+    for text in ["a longer label than before", "short"] {
+        let (relaid_300, asked_300) =
+            passes_work(&mut short, |dom| dom.set_text(short_texts[150], text));
+        let (relaid_3000, asked_3000) =
+            passes_work(&mut long, |dom| dom.set_text(long_texts[1_500], text));
+        assert!(
+            relaid_3000 <= relaid_300 && relaid_3000 <= 8,
+            "laying out one label relaid {relaid_3000} boxes in 3,000 rows and {relaid_300} in 300"
+        );
+        assert!(
+            asked_3000 < 64 && asked_3000 <= asked_300,
+            "composing one label asked {asked_3000} children in 3,000 rows and {asked_300} in 300"
+        );
+    }
+
+    // After an insertion and a removal the next change is again bounded: the record of the rows is
+    // made again by the frame that folds every row.
+    passes_work(&mut long, |dom| {
+        let row = dom.create_element(ElementName::new("row"));
+        dom.insert(row, dom.create_text("inserted"), None);
+        let before = dom.parent(long_texts[1_000]).expect("a row holds the text");
+        dom.insert(pane, row, Some(before));
+    });
+    passes_work(&mut long, |dom| {
+        dom.detach(dom.parent(long_texts[2_000]).expect("a row"))
+    });
+    passes_work(&mut long, |dom| dom.set_text(long_texts[1_500], "rebuilt"));
+    let (_, asked) = passes_work(&mut long, |dom| dom.set_text(long_texts[1_500], "after"));
+    assert!(
+        asked < 64,
+        "a change after an insertion asked {asked} children"
+    );
+}

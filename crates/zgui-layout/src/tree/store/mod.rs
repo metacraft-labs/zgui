@@ -108,8 +108,18 @@ pub struct LayoutStore {
     pub(crate) kept_scratch: crate::inline::kept::Scratch,
     /// Boxes whose unrounded result moved in the last pass.
     changed: Vec<BoxKey>,
+    /// What the children of each box with many children reported when the fragment pass last
+    /// folded them. Dropped wherever the box's child list or its children's order may change.
+    pub(crate) child_folds: rustc_hash::FxHashMap<BoxKey, crate::fragment::diff::sparse::ChildFold>,
     /// Boxes carrying the chain bit, see [`crate::tree::dirty`].
     pub(crate) chain: Vec<BoxKey>,
+    /// The boxes made, or whose layout was forgotten off the chain, since the last pass.
+    ///
+    /// With [`LayoutStore::chain`] this names every box a walk from the root finds dirty, so a pass
+    /// finds them without asking every child of every dirty box.
+    pub(crate) fresh: Vec<BoxKey>,
+    /// Whether every box was marked dirty since the last pass, which the lists do not record.
+    pub(crate) all_dirty: bool,
     /// The box the document is laid out from.
     root: Option<BoxKey>,
     /// Which boxes each element generated, in document order.
@@ -238,10 +248,13 @@ impl LayoutStore {
             scheduler: cephal::schedule::Scheduler::new(),
             generation: 1,
             touched: Vec::new(),
+            child_folds: rustc_hash::FxHashMap::default(),
             noted: Vec::new(),
             kept_scratch: Default::default(),
             changed: Vec::new(),
             chain: Vec::new(),
+            fresh: Vec::new(),
+            all_dirty: false,
             root: None,
             boxes_of_node: PagedVec::for_domain(zgui_dom::id::document_id::node_domain(document)),
             fragments: ChunkArena::new(fragment_domain),
@@ -322,6 +335,7 @@ impl LayoutStore {
             crate::node::kind::PaintedContent::Box
         };
         let key = named(self.boxes.insert(node));
+        self.fresh.push(key);
         let slot = self.styles.intern(&style);
         self.style_slots.replace(key, Some(slot));
         self.layout.replace(key, Some(BoxLayout::default()));
@@ -452,6 +466,8 @@ impl LayoutStore {
 
     /// Turns the pass's touched list into [`LayoutStore::changed`].
     pub(crate) fn finish_pass(&mut self) {
+        self.fresh.clear();
+        self.all_dirty = false;
         self.changed.clear();
         let touched = core::mem::take(&mut self.touched);
         for (key, before) in touched {
@@ -643,6 +659,7 @@ impl LayoutStore {
         if let Some(parent) = self.boxes.get(slot(key))?.parent {
             self.forget_layout_order(parent);
         }
+        self.child_folds.remove(&key);
         let node = self.boxes.get_mut(slot(key))?;
         node.layout_order.clear();
         Some(node)
@@ -650,6 +667,7 @@ impl LayoutStore {
 
     /// Clears the memo of whether `key`'s children paint in layout order.
     fn forget_layout_order(&mut self, key: BoxKey) {
+        self.child_folds.remove(&key);
         if let Some(node) = self.boxes.get_mut(slot(key)) {
             node.layout_order.clear();
         }
@@ -672,6 +690,7 @@ impl LayoutStore {
     /// Removes one box. Its record stays readable until the frame is recycled.
     pub fn remove(&mut self, key: BoxKey) -> bool {
         self.retired_boxes.push(key);
+        self.child_folds.remove(&key);
         if let Some(parent) = self.get(key).and_then(|node| node.parent) {
             self.forget_layout_order(parent);
         }
