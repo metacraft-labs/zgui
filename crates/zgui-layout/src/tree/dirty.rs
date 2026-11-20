@@ -22,6 +22,11 @@ pub(crate) const CHAIN: u8 = 0x10;
 /// Marks `box_` dirty: it is recomputed at the next pass, and so is its parent, which reads its
 /// style and its answer. The pass then follows changed answers upward on its own.
 ///
+/// The parent keeps the answers it gave. The scheduler asks it each of those questions again and
+/// compares, so a parent whose answers come out the same stops the change there: a label that
+/// changed inside a row of a list leaves the list alone. A parent with nothing to compare would be
+/// taken as changed, and the list laid out again over every row.
+///
 /// Returns how many boxes were newly reached, the ancestor chain included.
 pub fn mark_dirty(store: &mut LayoutStore, box_: BoxKey) -> u32 {
     if store.state(box_).is_none() {
@@ -34,7 +39,11 @@ pub fn mark_dirty(store: &mut LayoutStore, box_: BoxKey) -> u32 {
         if store.state(key).is_none() {
             continue;
         }
-        store.state_mut(key).forget_layout();
+        if key == box_ {
+            store.state_mut(key).forget_layout();
+        } else {
+            store.state_mut(key).forget_measurements();
+        }
         scheduler.mark(&mut Marker(store), to_node_id(key));
     }
     store.scheduler = scheduler;

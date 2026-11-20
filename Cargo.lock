@@ -692,8 +692,7 @@ dependencies = [
 [[package]]
 name = "cephal"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e5a13dfbd5a30b3a70dd76465339854bc8fe5ec22b5bb8548e1ec564b9412bd"
+source = "git+https://github.com/metacraft-labs/cephal?rev=6eb1cad5e33b5c1559c38b219447b2f8021756be#6eb1cad5e33b5c1559c38b219447b2f8021756be"
 
 [[package]]
 name = "cexpr"
@@ -6715,3 +6714,7 @@ dependencies = [
  "syn 2.0.119",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "cephal"
+version = "0.2.0"

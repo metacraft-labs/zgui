@@ -174,6 +174,16 @@ impl BoxLayout {
         }
     }
 
+    /// Throws away everything this box measured except the answers in its cache, which the
+    /// scheduler drains and asks again when it recomputes the box.
+    pub(crate) fn forget_measurements(&mut self) {
+        self.probe_memo = None;
+        self.intrinsic = [None, None];
+        if let Some(answers) = self.atomic.as_deref_mut() {
+            answers.clear();
+        }
+    }
+
     /// Throws away the two cache storeys, keeping the intrinsic answer.
     ///
     /// The intrinsic pre-pass alone may call this, and only immediately after computing that

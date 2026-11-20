@@ -30,6 +30,13 @@ git merge upstream/main
 Resolve conflicts in favour of upstream's design where the two overlap, run the tests of every
 crate the merge touched, and push `isonim`.
 
+## The layout engine
+
+zgui lays out through [cephal](https://github.com/zortax/cephal). This fork depends on Metacraft's
+fork of it, [metacraft-labs/cephal](https://github.com/metacraft-labs/cephal), pinned to a revision
+of its `isonim` branch in the workspace `Cargo.toml`. A change to layout that belongs in the engine
+is made there, with a test there, and the pin moves in the commit that needs it.
+
 ## Changes made here
 
 Every change carries a test in the crate it changes. No pull requests or issues are opened on the
