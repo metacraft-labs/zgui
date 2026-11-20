@@ -230,6 +230,7 @@ pub(crate) fn run_pass(
     document
         .guarded(|| style::driver::traverse_dom(&traverser, token, pool))
         .expect("the document is not poisoned");
+    matched.end();
     let (records, refreshed, workers) = traverser.finish();
     held.release(&table, now.seconds());
     drop(read);

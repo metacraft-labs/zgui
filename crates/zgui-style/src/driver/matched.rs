@@ -48,6 +48,7 @@ use style::data::{EagerPseudoStyles, ElementData};
 use style::dom::TElement;
 use style::properties::{ComputedValues, PropertyDeclarationBlock};
 use style::rule_tree::{CascadeLevel, StrongRuleNode};
+use style::selector_parser::PseudoElement;
 use style::shared_lock::Locked;
 use style::style_resolver::{PrimaryStyle, ResolvedElementStyles, ResolvedStyle};
 use style::stylesheets::layer_rule::LayerOrder;
@@ -348,6 +349,20 @@ impl Default for MatchCache {
 }
 
 impl MatchCache {
+    /// Forgets the styles the last traversal's matches were cascaded to, which only the elements
+    /// of one traversal share, so that the shared styles give back what no element holds.
+    pub(crate) fn end(&self) {
+        for table in &self.workers {
+            for kept in table
+                .lock()
+                .unwrap_or_else(|held| held.into_inner())
+                .values_mut()
+            {
+                kept.last = None;
+            }
+        }
+    }
+
     /// Forgets every match.
     pub(crate) fn clear(&self) {
         for table in &self.workers {
@@ -453,9 +468,18 @@ fn keepable(
         return None;
     }
     let rules = style.rules.as_ref()?;
+    // Copies, so the record holds none of the allocations the shared styles sweep when nothing
+    // else holds them: the copies are kept for their rule chains alone.
+    let mut pseudos = EagerPseudoStyles::default();
+    for (index, style) in styles.pseudos.as_array().iter().enumerate() {
+        if let Some(style) = style {
+            let pseudo = PseudoElement::from_eager_index(index);
+            pseudos.set(&pseudo, style.clone_with_flags(style.flags, Some(&pseudo)));
+        }
+    }
     Some(Kept {
         rules: without_style_attribute(rules, context),
-        pseudos: styles.pseudos.clone(),
+        pseudos,
         last: None,
         flags: recorded.flags,
     })
