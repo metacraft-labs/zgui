@@ -13,6 +13,15 @@ use zgui_interned::{ClassName, ElementName};
 use zgui_profile::{Counter, counter};
 use zgui_view::{BuildCx, Dom, IntoView, ScrollBehavior, ScrollTarget, View, ViewHost};
 
+/// Held by each test for its whole length: the work counters are process-wide, and a test run
+/// beside another would count the other's work as its own.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`SERIAL`], also after a test that held it failed.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|held| held.into_inner())
+}
+
 const CSS: &str = "root { display: block; width: 400px; height: 300px }
                    scroll { display: block; height: 300px; overflow: auto }
                    row { display: flex; height: 18px }";
@@ -60,6 +69,7 @@ fn visits(
 
 #[test]
 fn a_label_change_in_a_long_list_visits_nodes_bounded_by_the_change() {
+    let _serial = serial();
     let (mut short, _, short_texts) = list(300);
     let (mut long, pane, long_texts) = list(3_000);
 
@@ -145,6 +155,7 @@ fn passes_work(
 
 #[test]
 fn a_label_change_in_a_long_list_lays_out_and_composes_work_bounded_by_the_change() {
+    let _serial = serial();
     let (mut short, _, short_texts) = list(300);
     let (mut long, pane, long_texts) = list(3_000);
     // The first change after building records what the next one reads; the later ones are
