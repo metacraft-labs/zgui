@@ -6243,6 +6243,7 @@ dependencies = [
 name = "zgui-render-wgpu"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "bincode",
  "bytemuck",
  "futures",
@@ -6251,6 +6252,7 @@ dependencies = [
  "tracing",
  "web-time",
  "wgpu",
+ "windows",
  "zgui-atlas",
  "zgui-bits",
  "zgui-color",
