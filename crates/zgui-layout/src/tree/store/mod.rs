@@ -108,6 +108,11 @@ pub struct LayoutStore {
     pub(crate) kept_scratch: crate::inline::kept::Scratch,
     /// Boxes whose unrounded result moved in the last pass.
     changed: Vec<BoxKey>,
+    /// Boxes whose unrounded result moved in a pass since the fragment pass last read them.
+    ///
+    /// Apart from [`LayoutStore::changed`], which describes the last pass whether or not a fragment
+    /// pass has composed it since: a frame that only repaints runs no layout pass.
+    pub(crate) moved_since_composed: Vec<BoxKey>,
     /// What the children of each box with many children reported when the fragment pass last
     /// folded them. Dropped wherever the box's child list or its children's order may change.
     pub(crate) child_folds: rustc_hash::FxHashMap<BoxKey, crate::fragment::diff::sparse::ChildFold>,
@@ -249,6 +254,7 @@ impl LayoutStore {
             generation: 1,
             touched: Vec::new(),
             child_folds: rustc_hash::FxHashMap::default(),
+            moved_since_composed: Vec::new(),
             noted: Vec::new(),
             kept_scratch: Default::default(),
             changed: Vec::new(),
@@ -479,6 +485,7 @@ impl LayoutStore {
             }
         }
         counter::add(Counter::NodesChanged, self.changed.len() as u64);
+        self.moved_since_composed.extend_from_slice(&self.changed);
     }
 
     /// The boxes whose unrounded result moved in the last pass.

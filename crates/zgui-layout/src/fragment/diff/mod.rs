@@ -153,9 +153,9 @@ pub fn rebuild_in(
     let bound = damage.bound();
     let mut layout_moved: rustc_hash::FxHashMap<BoxKey, smallvec::SmallVec<[BoxKey; 2]>> =
         rustc_hash::FxHashMap::default();
-    for moved in store.changed() {
-        if let Some(parent) = store.get(*moved).and_then(|node| node.parent) {
-            layout_moved.entry(parent).or_default().push(*moved);
+    for moved in core::mem::take(&mut store.moved_since_composed) {
+        if let Some(parent) = store.get(moved).and_then(|node| node.parent) {
+            layout_moved.entry(parent).or_default().push(moved);
         }
     }
     let mut pass = Pass {
