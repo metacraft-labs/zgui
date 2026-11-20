@@ -9,6 +9,7 @@
 
 pub mod animations;
 pub mod context;
+pub(crate) mod matched;
 mod memo;
 mod recalc;
 pub(crate) mod share;
@@ -124,6 +125,8 @@ pub(crate) struct Pass<'a> {
     pub(crate) refs: &'a traversal::RefsCache,
     /// The computed styles earlier cascades produced, by rule chain.
     pub(crate) shared: &'a share::SharedStyles,
+    /// The matches earlier traversals kept, by matching key.
+    pub(crate) matched: &'a matched::MatchCache,
     /// The elements whose animations crossed a lifecycle edge since their last cascade, or `None`
     /// when every animation tick cascades.
     pub(crate) settling: Option<&'a rustc_hash::FxHashSet<zgui_dom::NodeIndex>>,
@@ -180,6 +183,7 @@ pub(crate) fn run_pass(
         now,
         refs,
         shared,
+        matched,
         settling,
     } = pass;
     let Some(root) = document.root() else {
@@ -194,6 +198,7 @@ pub(crate) fn run_pass(
         stylist.flush(guards).process_style(root, Some(snapshots));
     });
 
+    matched.begin(stylist.num_rebuilds());
     let read = lock.read();
     let table = animations.clone();
     let context = context::build(
@@ -218,7 +223,7 @@ pub(crate) fn run_pass(
     // The traversal styles each element against the table it drops a finished animation from,
     // so the animations that fill forwards are held running for its length.
     let held = fill::hold(&table);
-    let traverser = RecalcStyle::new(context, refs, shared, settling);
+    let traverser = RecalcStyle::new(context, refs, shared, matched, settling);
     // A worker that panics leaves per-element bookkeeping in a state no later traversal can
     // interpret, and the worker that panicked holds nothing anyone can inspect, so the document is
     // poisoned on the way out and the panic keeps going.

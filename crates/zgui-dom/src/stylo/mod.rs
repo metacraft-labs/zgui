@@ -46,6 +46,7 @@
 //! | [`data`] | reading the engine's per-element output back off the tree |
 //! | [`flags`] | the engine's bookkeeping bits, and the descent flag that is a view |
 //! | [`bloom`] | the ancestor hashes selector matching filters candidates with |
+//! | [`recorder`] | what one element's matching wrote and consulted, for a match cache |
 
 pub mod attributes;
 pub mod bloom;
@@ -54,5 +55,6 @@ pub mod document;
 pub mod element;
 pub mod flags;
 pub mod node;
+pub mod recorder;
 pub mod selectors;
 pub mod shadow_root;

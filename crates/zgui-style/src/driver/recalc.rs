@@ -27,15 +27,17 @@ use style::invalidation::element::restyle_hints::RestyleHint;
 use style::matching::MatchMethods;
 use style::properties::{ComputedValues, ComputedValuesInner};
 use style::sharing::StyleSharingTarget;
-use style::style_resolver::{PseudoElementResolution, StyleResolverForElement};
+use style::style_resolver::{
+    PseudoElementResolution, ResolvedElementStyles, StyleResolverForElement,
+};
 use style::stylist::RuleInclusion;
 use style::traversal::{DomTraversal, PerLevelTraversalData};
 use style::traversal_flags::TraversalFlags;
 use zgui_dom::Node;
 use zgui_profile::{Counter, counter};
 
-use crate::driver::memo;
 use crate::driver::traversal::RecalcStyle;
+use crate::driver::{matched, memo};
 
 /// Which custom properties an element's inherited map changed by, for the elements below it.
 #[derive(Debug, Default)]
@@ -414,6 +416,90 @@ fn with_inherited_map(old: &ComputedValues, parent: &ComputedValues) -> ServoArc
     )
 }
 
+/// What the match cache holds for one element about to be matched.
+struct MatchProbe {
+    /// The mode the cache runs in.
+    mode: matched::Mode,
+    /// The element's key, when the cache can answer for it.
+    key: Option<matched::Key>,
+    /// The match kept under the key.
+    kept: Option<matched::Kept>,
+}
+
+/// Looks `element` up in the match cache.
+///
+/// Before the engine's sharing cache, so a hit costs the key and nothing else: the sharing cache
+/// revalidates the element against every candidate it tries, which is most of what matching a row
+/// of a list costs once the rows' rules are known.
+fn probe_match<'doc>(
+    traversal: &RecalcStyle<'_>,
+    context: &mut StyleContext<E<'doc>>,
+    element: E<'doc>,
+) -> MatchProbe {
+    let mode = matched::mode();
+    let key = (mode != matched::Mode::Off)
+        .then(|| matched::Key::of(element, context))
+        .flatten();
+    let kept = key.as_ref().and_then(|key| traversal.matched.find(key));
+    match (&key, &kept) {
+        (_, Some(_)) => counter::bump(Counter::MatchCacheHits),
+        (Some(_), None) => counter::bump(Counter::MatchCacheMisses),
+        (None, None) => counter::bump(Counter::MatchCacheSkips),
+    }
+    MatchProbe { mode, key, kept }
+}
+
+/// The styles of `element` cascaded from the rules the cache kept, when it kept any.
+fn reuse_match<'doc>(
+    probe: &MatchProbe,
+    context: &mut StyleContext<E<'doc>>,
+    element: E<'doc>,
+) -> Option<ResolvedElementStyles> {
+    if probe.mode != matched::Mode::On {
+        return None;
+    }
+    let kept = probe.kept.as_ref()?;
+    let stand_in = parent_style(element)?;
+    let inputs = kept.inputs(element, context.shared, &stand_in);
+    let mut resolver = StyleResolverForElement::new(
+        element,
+        context,
+        RuleInclusion::All,
+        PseudoElementResolution::IfApplicable,
+    );
+    Some(resolver.cascade_styles_with_default_parents(inputs))
+}
+
+/// The styles of `element` from selector matching, kept in the cache for the elements that match
+/// alike, or checked against what the cache holds.
+fn match_and_keep<'doc>(
+    traversal: &RecalcStyle<'_>,
+    probe: MatchProbe,
+    context: &mut StyleContext<E<'doc>>,
+    element: E<'doc>,
+) -> ResolvedElementStyles {
+    context.thread_local.statistics.elements_matched += 1;
+    let (new_styles, recorded) = zgui_dom::stylo::recorder::record(element, || {
+        let mut resolver = StyleResolverForElement::new(
+            element,
+            context,
+            RuleInclusion::All,
+            PseudoElementResolution::IfApplicable,
+        );
+        resolver.resolve_style_with_default_parents()
+    });
+    match (probe.kept, probe.key) {
+        (Some(kept), Some(_)) => {
+            matched::check(&kept, &new_styles, &recorded, element, context.shared);
+        }
+        (None, Some(key)) => traversal
+            .matched
+            .keep(key, &new_styles, recorded, context.shared),
+        _ => {}
+    }
+    new_styles
+}
+
 fn compute_style<'doc>(
     traversal: &RecalcStyle<'_>,
     traversal_data: &PerLevelTraversalData,
@@ -449,6 +535,9 @@ fn compute_style<'doc>(
     // Styles the engine's sharing cache gave: the element they came from went through the shared
     // styles already.
     let mut settled = false;
+    // The match cache key of an element matched or answered from the cache, under which its final
+    // style is noted for the next element that cascades alike.
+    let mut noted: Option<matched::Key> = None;
     let mut new_styles = match kind {
         RestyleKind::MatchAndCascade => {
             debug_assert!(
@@ -467,32 +556,58 @@ fn compute_style<'doc>(
 
             important_rules_changed = true;
 
-            let mut target = StyleSharingTarget::new(element);
-            match target.share_style_if_possible(context) {
-                Some(shared_styles) => {
-                    context.thread_local.statistics.styles_shared += 1;
-                    settled = true;
-                    shared_styles
-                }
+            let probe = probe_match(traversal, context, element);
+            if probe.mode != matched::Mode::Off {
+                noted = probe.key.clone();
+            }
+            let whole = (probe.mode != matched::Mode::Off)
+                .then(|| {
+                    let parent = parent_style(element)?;
+                    probe.kept.as_ref()?.reuse(element, &parent)
+                })
+                .flatten();
+            // In a shadow run the style a hit would take is checked against the cascade's.
+            let (whole, checked) = if probe.mode == matched::Mode::Shadow {
+                (None, whole)
+            } else {
+                (whole, None)
+            };
+            if whole.is_some() {
+                context.thread_local.statistics.styles_shared += 1;
+                settled = true;
+            }
+            match whole.or_else(|| reuse_match(&probe, context, element)) {
+                Some(reused) => reused,
                 None => {
-                    context.thread_local.statistics.elements_matched += 1;
-                    let new_styles = {
-                        let mut resolver = StyleResolverForElement::new(
-                            element,
-                            context,
-                            RuleInclusion::All,
-                            PseudoElementResolution::IfApplicable,
-                        );
-                        resolver.resolve_style_with_default_parents()
-                    };
-                    context.thread_local.sharing_cache.insert_if_possible(
-                        &element,
-                        &new_styles.primary,
-                        Some(&mut target),
-                        traversal_data.current_dom_depth,
-                        context.shared,
-                    );
-                    new_styles
+                    let mut target = StyleSharingTarget::new(element);
+                    match target.share_style_if_possible(context) {
+                        Some(shared_styles) => {
+                            context.thread_local.statistics.styles_shared += 1;
+                            settled = true;
+                            shared_styles
+                        }
+                        None => {
+                            let new_styles = match_and_keep(traversal, probe, context, element);
+                            if let Some(checked) = &checked {
+                                assert!(
+                                    super::share::same_values(
+                                        checked.primary_style(),
+                                        new_styles.primary_style()
+                                    ),
+                                    "the match cache gave an element a style its cascade does not \
+                                     produce"
+                                );
+                            }
+                            context.thread_local.sharing_cache.insert_if_possible(
+                                &element,
+                                &new_styles.primary,
+                                Some(&mut target),
+                                traversal_data.current_dom_depth,
+                                context.shared,
+                            );
+                            new_styles
+                        }
+                    }
                 }
             }
         }
@@ -566,6 +681,12 @@ fn compute_style<'doc>(
         if shared != 0 {
             counter::add(Counter::StylesShared, shared as u64);
         }
+    }
+    if let Some(key) = noted
+        && let Some(parent) = parent_style(element)
+    {
+        let attribute = element.style_attribute().map(|block| block.clone_arc());
+        traversal.matched.note(&key, parent, attribute, &new_styles);
     }
 
     // Kept across the call that replaces it: the children's hint is decided by what they can

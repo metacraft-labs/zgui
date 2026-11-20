@@ -18,6 +18,7 @@ use crate::node::handle::Node;
 impl Node<'_> {
     /// Records `flags`, splitting them between this element and its parent as the matcher intends.
     pub fn record_selector_flags(self, flags: ElementSelectorFlags) {
+        crate::stylo::recorder::note_flags(self, flags);
         let for_self = flags.for_self();
         if !for_self.is_empty() {
             self.record().insert_selector_flags(for_self);

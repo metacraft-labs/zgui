@@ -304,10 +304,17 @@ impl<'doc> TElement for Node<'doc> {
     ) where
         V: Push<ApplicableDeclarationBlock>,
     {
+        let mut counted = Counted {
+            inner: hints,
+            pushed: false,
+        };
         self.store()
             .host()
             .hints()
-            .hints_for(*self, visited_handling, hints);
+            .hints_for(*self, visited_handling, &mut counted);
+        if counted.pushed {
+            crate::stylo::recorder::taint();
+        }
     }
 
     fn local_name(&self) -> &web_atoms::LocalName {
@@ -327,6 +334,7 @@ impl<'doc> TElement for Node<'doc> {
         &self,
         _display: &style::values::computed::Display,
     ) -> euclid::default::Size2D<Option<app_units::Au>> {
+        crate::stylo::recorder::taint();
         euclid::default::Size2D::new(None, None)
     }
 
@@ -356,5 +364,20 @@ impl<'doc> TElement for Node<'doc> {
 
     fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) -> RestyleDamage {
         Node::layout_damage(old, new)
+    }
+}
+
+/// A hint sink that notes whether anything was pushed into it.
+struct Counted<'a, V> {
+    /// The sink the hints go to.
+    inner: &'a mut V,
+    /// Whether a hint was pushed.
+    pushed: bool,
+}
+
+impl<V: Push<ApplicableDeclarationBlock>> Push<ApplicableDeclarationBlock> for Counted<'_, V> {
+    fn push(&mut self, value: ApplicableDeclarationBlock) {
+        self.pushed = true;
+        self.inner.push(value);
     }
 }

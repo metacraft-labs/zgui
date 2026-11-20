@@ -3,6 +3,7 @@
 //! | Module | Contents |
 //! |---|---|
 //! | `animation` | the second descent an animation that cannot repaint is serviced by |
+//! | `matched` | elements whose matching an earlier element's match answers |
 //! | `memo` | elements a restyle cascades together, and what keeps their results apart |
 //! | `custom_reader` | a custom property change reaching a custom element that names no `var()` |
 //! | `negation` | a complex selector inside `:not()` as its ancestor and attribute move |
@@ -33,6 +34,8 @@ mod fill;
 mod hidden;
 #[path = "restyle/keyframe_vars.rs"]
 mod keyframe_vars;
+#[path = "restyle/matched.rs"]
+mod matched;
 #[path = "restyle/memo.rs"]
 mod memo;
 #[path = "restyle/moved.rs"]

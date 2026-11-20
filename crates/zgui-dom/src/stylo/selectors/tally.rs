@@ -20,6 +20,15 @@ use zgui_profile::{Counter, counter};
 #[inline]
 pub(crate) fn tested<T>(answer: T) -> T {
     counter::bump(Counter::SelectorMatches);
+    if zgui_profile::COUNTERS_ENABLED {
+        match crate::stylo::recorder::phase() {
+            crate::stylo::recorder::Phase::Keying => counter::bump(Counter::SelectorMatchesKeying),
+            crate::stylo::recorder::Phase::Matching => {
+                counter::bump(Counter::SelectorMatchesMatching)
+            }
+            crate::stylo::recorder::Phase::Other => {}
+        }
+    }
     answer
 }
 

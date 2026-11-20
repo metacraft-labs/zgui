@@ -86,6 +86,8 @@ pub struct StyleEngine {
     /// The computed styles earlier cascades produced, by rule chain, kept from one restyle to the
     /// next.
     shared: crate::driver::share::SharedStyles,
+    /// The matches earlier restyles kept, by matching key, until the rule set changes.
+    matched: crate::driver::matched::MatchCache,
     /// The user-agent sheet, held so that it stays installed.
     _user_agent: SheetHandle,
 }
@@ -136,6 +138,7 @@ impl StyleEngine {
             refreshed_animations: Vec::new(),
             refs: crate::driver::traversal::RefsCache::default(),
             shared: crate::driver::share::SharedStyles::default(),
+            matched: crate::driver::matched::MatchCache::default(),
             _user_agent: user_agent,
         }
     }

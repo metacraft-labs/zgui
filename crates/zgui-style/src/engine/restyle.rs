@@ -102,6 +102,7 @@ impl StyleEngine {
         if self.deps.is_disabled() {
             self.refs.clear();
             self.shared.clear();
+            self.matched.clear();
         } else {
             self.refs.trim();
         }
@@ -133,6 +134,7 @@ impl StyleEngine {
                         now: self.animations.now(),
                         refs: &self.refs,
                         shared: &self.shared,
+                        matched: &self.matched,
                         settling: self.animations.settling(),
                     },
                     TraversalFlags::AnimationOnly,
@@ -159,6 +161,7 @@ impl StyleEngine {
                         now: self.animations.now(),
                         refs: &self.refs,
                         shared: &self.shared,
+                        matched: &self.matched,
                         settling: None,
                     },
                     TraversalFlags::empty(),
