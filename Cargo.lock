@@ -6716,7 +6716,3 @@ dependencies = [
  "syn 2.0.119",
  "winnow",
 ]
-
-[[patch.unused]]
-name = "cephal"
-version = "0.2.0"
