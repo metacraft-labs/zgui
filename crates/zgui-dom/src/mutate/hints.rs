@@ -26,12 +26,19 @@ use crate::arena::store::DocumentStore;
 use crate::dirty::propagate;
 use crate::id::node_key::NodeIndex;
 
+/// How many entries a log scans before it indexes them.
+///
+/// Most batches touch a handful of elements, where a scan beats a hash. A batch that builds a
+/// list touches one element per row, where a scan per row costs the square of the list.
+const SCAN: usize = 16;
+
 /// The hints one batch decided on, waiting to be applied.
 #[derive(Default)]
 pub struct HintLog {
-    /// One entry per element, unioned as more changes land on it. A batch touches a handful of
-    /// elements, so a scan beats a hash.
+    /// One entry per element, unioned as more changes land on it.
     entries: Vec<(NodeIndex, RestyleHint)>,
+    /// Each entry's position in [`HintLog::entries`], once there are more than [`SCAN`] of them.
+    index: rustc_hash::FxHashMap<NodeIndex, u32>,
 }
 
 impl HintLog {
@@ -52,10 +59,16 @@ impl HintLog {
 
     /// The hint recorded for `node`, if any.
     pub fn get(&self, node: NodeIndex) -> Option<RestyleHint> {
-        self.entries
-            .iter()
-            .find(|(index, _)| *index == node)
-            .map(|(_, hint)| *hint)
+        self.position(node).map(|at| self.entries[at].1)
+    }
+
+    /// Where `node`'s entry is.
+    fn position(&self, node: NodeIndex) -> Option<usize> {
+        if self.entries.len() > SCAN {
+            self.index.get(&node).map(|at| *at as usize)
+        } else {
+            self.entries.iter().position(|(index, _)| *index == node)
+        }
     }
 
     /// Records `hint` for `node`, and that `node` and its ancestors owe restyle work.
@@ -68,9 +81,21 @@ impl HintLog {
     ///
     /// Panics if `node` names no live node of `store`.
     pub(crate) fn record(&mut self, store: &mut DocumentStore, node: NodeIndex, hint: RestyleHint) {
-        match self.entries.iter_mut().find(|(index, _)| *index == node) {
-            Some((_, held)) => held.insert(hint),
-            None => self.entries.push((node, hint)),
+        match self.position(node) {
+            Some(at) => self.entries[at].1.insert(hint),
+            None => {
+                self.entries.push((node, hint));
+                if self.entries.len() == SCAN + 1 {
+                    self.index = self
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .map(|(at, (index, _))| (*index, at as u32))
+                        .collect();
+                } else if self.entries.len() > SCAN + 1 {
+                    self.index.insert(node, self.entries.len() as u32 - 1);
+                }
+            }
         }
         propagate::mark(store, node, Dirty::RESTYLE);
     }
@@ -89,6 +114,7 @@ impl HintLog {
     /// An element the batch has since removed is skipped: it has no style data to hand a hint to
     /// and nothing will traverse it again.
     pub(crate) fn apply(&mut self, store: &DocumentStore) {
+        self.index.clear();
         for (node, hint) in self.entries.drain(..) {
             let Some(record) = store.try_core(node) else {
                 continue;
@@ -129,6 +155,35 @@ mod tests {
         let held = hints.get(root).expect("a hint was recorded");
         assert!(held.contains(RestyleHint::RESTYLE_SELF));
         assert!(held.contains(RestyleHint::RECASCADE_SELF));
+    }
+
+    #[test]
+    fn a_batch_that_builds_a_list_keeps_one_hint_per_row() {
+        let mut document = Document::new();
+        let root = document.append(
+            document.document_index(),
+            NodeKind::Element,
+            ElementName::new("root"),
+        );
+        let rows: Vec<_> = (0..200)
+            .map(|_| document.append(root, NodeKind::Element, ElementName::new("row")))
+            .collect();
+        let mut hints = HintLog::new();
+        for row in &rows {
+            hints.record(document.store_mut(), *row, RestyleHint::RESTYLE_SELF);
+        }
+        for row in &rows {
+            hints.record(document.store_mut(), *row, RestyleHint::RECASCADE_SELF);
+        }
+
+        assert_eq!(hints.len(), rows.len());
+        for row in &rows {
+            let held = hints.get(*row).expect("a hint was recorded");
+            assert!(held.contains(RestyleHint::RESTYLE_SELF | RestyleHint::RECASCADE_SELF));
+        }
+        hints.apply(document.store());
+        assert!(hints.is_empty());
+        assert!(hints.get(rows[0]).is_none());
     }
 
     #[test]
