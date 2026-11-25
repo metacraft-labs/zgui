@@ -11,12 +11,6 @@ use zgui_render::SubpixelOrder;
 /// The environment variable that states [`TextAntialiasing`] for every window of a process.
 const VARIABLE: &str = "ZGUI_TEXT_AA";
 
-/// The scale from which a display of unknown layout gets one coverage for each pixel.
-///
-/// At this density the coloured edges add no visible detail, and a display this dense is often
-/// one with no stripes at all.
-const DENSE_SCALE: f32 = 2.0;
-
 /// How a window antialiases its text.
 ///
 /// ```
@@ -31,8 +25,11 @@ const DENSE_SCALE: f32 = 2.0;
 pub enum TextAntialiasing {
     /// Follows the layout the platform reports for the display.
     ///
-    /// A display of unknown layout gets per-channel coverage in red, green, blue order below a
-    /// scale of two, and one coverage for each pixel from a scale of two.
+    /// A display whose layout the platform does not report gets one coverage for each pixel, as a
+    /// browser draws on it: Chromium takes per-channel coverage only from a stated setting (the
+    /// system's ClearType or fontconfig's `rgba`) and draws grayscale text where nothing states
+    /// one. Guessing stripes there gave every such window coloured glyph edges that no browser
+    /// window beside it shows, and on a display with no stripes at all they are wrong.
     #[default]
     Auto,
     /// One coverage for each pixel. Correct on every display.
@@ -76,8 +73,7 @@ impl TextAntialiasing {
     /// The stripe order a window draws per-channel coverage for, or `None` for one coverage for
     /// each pixel.
     ///
-    /// `layout` is what the platform reports for the display, and `scale` is how many device
-    /// pixels one CSS pixel is.
+    /// `layout` is what the platform reports for the display.
     ///
     /// ```
     /// use zgui_platform::SubpixelLayout;
@@ -85,13 +81,13 @@ impl TextAntialiasing {
     /// use zgui_runtime::TextAntialiasing;
     ///
     /// let auto = TextAntialiasing::Auto;
-    /// assert_eq!(auto.order(SubpixelLayout::Unknown, 1.0), Some(SubpixelOrder::RedToBlue));
-    /// assert_eq!(auto.order(SubpixelLayout::Unknown, 2.0), None);
-    /// assert_eq!(auto.order(SubpixelLayout::HorizontalBgr, 2.0), Some(SubpixelOrder::BlueToRed));
-    /// assert_eq!(auto.order(SubpixelLayout::None, 1.0), None);
-    /// assert_eq!(TextAntialiasing::Grayscale.order(SubpixelLayout::HorizontalRgb, 1.0), None);
+    /// assert_eq!(auto.order(SubpixelLayout::Unknown), None);
+    /// assert_eq!(auto.order(SubpixelLayout::HorizontalRgb), Some(SubpixelOrder::RedToBlue));
+    /// assert_eq!(auto.order(SubpixelLayout::HorizontalBgr), Some(SubpixelOrder::BlueToRed));
+    /// assert_eq!(auto.order(SubpixelLayout::None), None);
+    /// assert_eq!(TextAntialiasing::Grayscale.order(SubpixelLayout::HorizontalRgb), None);
     /// ```
-    pub fn order(self, layout: SubpixelLayout, scale: f32) -> Option<SubpixelOrder> {
+    pub fn order(self, layout: SubpixelLayout) -> Option<SubpixelOrder> {
         match self {
             Self::Grayscale => None,
             Self::Rgb => Some(SubpixelOrder::RedToBlue),
@@ -99,7 +95,6 @@ impl TextAntialiasing {
             Self::Auto => match layout {
                 SubpixelLayout::HorizontalRgb => Some(SubpixelOrder::RedToBlue),
                 SubpixelLayout::HorizontalBgr => Some(SubpixelOrder::BlueToRed),
-                SubpixelLayout::Unknown if scale < DENSE_SCALE => Some(SubpixelOrder::RedToBlue),
                 _ => None,
             },
         }
@@ -121,48 +116,35 @@ mod tests {
             SubpixelLayout::HorizontalRgb,
             SubpixelLayout::HorizontalBgr,
         ] {
-            for scale in [1.0, 1.5, 2.0, 3.0] {
-                assert_eq!(TextAntialiasing::Grayscale.order(layout, scale), None);
-                assert_eq!(
-                    TextAntialiasing::Rgb.order(layout, scale),
-                    Some(SubpixelOrder::RedToBlue)
-                );
-                assert_eq!(
-                    TextAntialiasing::Bgr.order(layout, scale),
-                    Some(SubpixelOrder::BlueToRed)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn an_unknown_display_gets_stripes_only_below_a_scale_of_two() {
-        let auto = TextAntialiasing::Auto;
-        for scale in [1.0, 1.25, 1.5, 1.75] {
+            assert_eq!(TextAntialiasing::Grayscale.order(layout), None);
             assert_eq!(
-                auto.order(SubpixelLayout::Unknown, scale),
-                Some(SubpixelOrder::RedToBlue),
-                "{scale}"
-            );
-        }
-        for scale in [2.0, 2.5, 3.0] {
-            assert_eq!(auto.order(SubpixelLayout::Unknown, scale), None, "{scale}");
-        }
-    }
-
-    #[test]
-    fn a_reported_layout_decides_at_every_scale() {
-        let auto = TextAntialiasing::Auto;
-        for scale in [1.0, 2.0, 3.0] {
-            assert_eq!(
-                auto.order(SubpixelLayout::HorizontalRgb, scale),
+                TextAntialiasing::Rgb.order(layout),
                 Some(SubpixelOrder::RedToBlue)
             );
             assert_eq!(
-                auto.order(SubpixelLayout::HorizontalBgr, scale),
+                TextAntialiasing::Bgr.order(layout),
                 Some(SubpixelOrder::BlueToRed)
             );
-            assert_eq!(auto.order(SubpixelLayout::None, scale), None);
         }
+    }
+
+    #[test]
+    fn an_unknown_display_gets_one_coverage_per_pixel() {
+        let auto = TextAntialiasing::Auto;
+        assert_eq!(auto.order(SubpixelLayout::Unknown), None);
+    }
+
+    #[test]
+    fn a_reported_layout_decides() {
+        let auto = TextAntialiasing::Auto;
+        assert_eq!(
+            auto.order(SubpixelLayout::HorizontalRgb),
+            Some(SubpixelOrder::RedToBlue)
+        );
+        assert_eq!(
+            auto.order(SubpixelLayout::HorizontalBgr),
+            Some(SubpixelOrder::BlueToRed)
+        );
+        assert_eq!(auto.order(SubpixelLayout::None), None);
     }
 }

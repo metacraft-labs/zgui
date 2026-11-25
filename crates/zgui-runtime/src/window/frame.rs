@@ -961,8 +961,7 @@ impl Window {
     /// so the whole surface is damaged.
     fn settle_text_coverage(&mut self) {
         let order = if self.renderer.capabilities().subpixel_text && !self.translucent {
-            self.text_antialiasing
-                .order(self.surface.subpixel_layout(), self.scale)
+            self.text_antialiasing.order(self.surface.subpixel_layout())
         } else {
             None
         };

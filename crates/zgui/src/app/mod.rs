@@ -564,7 +564,8 @@ impl App {
     /// How every window antialiases its text.
     ///
     /// The default is [`TextAntialiasing::Auto`](crate::TextAntialiasing::Auto), which follows
-    /// the subpixel layout the platform reports for the display. Text with one coverage for each
+    /// the subpixel layout the platform reports for the display, and draws one coverage for each
+    /// pixel where the platform reports none, as a browser does. Text with one coverage for each
     /// colour channel shows coloured edges on a display with no horizontal stripes, such as most
     /// OLED panels, and no platform reports those reliably. An application for such a display
     /// states [`TextAntialiasing::Grayscale`](crate::TextAntialiasing::Grayscale). The
