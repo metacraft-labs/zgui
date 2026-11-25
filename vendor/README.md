@@ -69,3 +69,12 @@ with the cache off, on a miss and on a hit, and pins the invalidation on install
 The sample table builds each `Script` with `Script::from_bytes`. Upstream calls
 `from_str_unchecked`, which parlance 0.1.1 deprecates, and every build that compiles this copy as a
 path dependency printed 161 warnings.
+
+### Synthetic bold only for a bold request (`font.rs`)
+
+`FontInfo::synthesis` emboldened a face whenever the requested weight was heavier than the face
+and it had no weight axis, so `font-weight: 500` on a family with only regular and bold faces (the
+matcher rightly picks regular) was drawn thickened. Browsers synthesise bold only for a request of
+600 or more met by a face lighter than 600; the patch does the same.
+`crates/zgui-text-parley/tests/line.rs` (`a_medium_request_on_a_regular_face_is_not_emboldened`)
+pins it.

@@ -98,7 +98,11 @@ impl FontInfo {
             if self.has_weight_axis() {
                 synth.vars[len] = (Tag::new(b"wght"), weight.value());
                 len += 1;
-            } else if weight.value() > self.weight.value() {
+            } else if weight.value() >= 600.0 && self.weight.value() < 600.0 {
+                // ZGUI-PATCH: embolden only for a bold request (600 and up) met by a face that is
+                // not bold, as browsers do. Upstream emboldened any request heavier than the face,
+                // so `font-weight: 500` on a family with only regular and bold faces drew the
+                // regular face thickened, where Chromium draws it plain.
                 synth.embolden = true;
             }
         }

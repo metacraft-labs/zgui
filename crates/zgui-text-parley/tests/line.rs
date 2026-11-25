@@ -340,3 +340,30 @@ fn a_cached_run_keys_exactly_as_the_run_it_was_shaped_from() {
         .collect();
     assert_eq!(first, second, "the brush is not part of a glyph's key");
 }
+
+/// A medium request on a family with only a regular face is drawn with that face, plain, as a
+/// browser draws it; a bold request is emboldened.
+///
+/// The matcher picks the regular face for 500 (CSS Fonts 4 §5.2: below the target first). Only a
+/// request of 600 or more met by a face lighter than 600 is synthesised bold, which is Chromium's
+/// threshold; thickening the regular face for 500 drew CodeTracer's current call-trace row heavier
+/// than the desktop does.
+#[test]
+fn a_medium_request_on_a_regular_face_is_not_emboldened() {
+    let mut shaper = shaper();
+    let families = [Ident::new(support::LATIN)];
+    let mut medium = latin(&families);
+    medium.weight = 500;
+    let mut bold = latin(&families);
+    bold.weight = 700;
+    let runs = shaper.shape_line("hello", &medium);
+    assert_eq!(
+        runs[0].synthetic_bold, 0.0,
+        "500 on a regular-only family is drawn plain"
+    );
+    let runs = shaper.shape_line("hello", &bold);
+    assert!(
+        runs[0].synthetic_bold > 0.0,
+        "700 with no bold face is synthesised"
+    );
+}
