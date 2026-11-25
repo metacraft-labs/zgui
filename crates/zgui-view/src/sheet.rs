@@ -141,6 +141,21 @@ pub fn install_stylesheet(name: &str, css: &str) {
     }
 }
 
+/// The same as [`install_stylesheet`], for a sheet read from the directory `dir` whose resources
+/// are read inside `root`.
+///
+/// See [`ViewHost::install_stylesheet_at`](crate::ViewHost::install_stylesheet_at).
+pub fn install_stylesheet_at(name: &str, css: &str, dir: &std::path::Path, root: &std::path::Path) {
+    match current_host() {
+        Some(host) => host.install_stylesheet_at(name, css, dir, root),
+        None => debug_assert!(
+            false,
+            "install_stylesheet_at({name:?}) was called outside a window's scope, so no document \
+             received it"
+        ),
+    }
+}
+
 /// Removes the sheet installed under `name` from the enclosing window's document.
 ///
 /// Removing a name that is not installed does nothing. A component's own sheet is normally left

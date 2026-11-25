@@ -186,6 +186,8 @@ pub use zgui_reactive::task;
 pub use zgui_render as render;
 /// The frame pipeline, its windows and its timers.
 pub use zgui_runtime as runtime;
+/// The files and `data:` URIs a style sheet names, and the rule that decides which may be read.
+pub use zgui_runtime::resources;
 /// The display list a frame is composed into.
 pub use zgui_scene as scene;
 /// Drawing with a shader of one's own: declaring an effect, and the handle it is drawn through.

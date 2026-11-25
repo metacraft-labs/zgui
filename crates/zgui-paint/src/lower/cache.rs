@@ -285,6 +285,14 @@ fn hash_of(style: &PaintStyle, scale: f32) -> u64 {
             hash = color(hash, stop.color).u32(u32::from(stop.position.is_some()));
         }
     }
+    for picture in style
+        .background
+        .pictures
+        .iter()
+        .chain(style.mask.iter().flat_map(|mask| mask.layers.iter()))
+    {
+        hash = hash.bytes(picture.url.as_bytes());
+    }
     for value in style.border.colors {
         hash = color(hash, value);
     }

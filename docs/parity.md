@@ -29,10 +29,10 @@ not a backlog, so it is never added to what is left to do.
 | Property names the engine generates | 322 |
 | Distinct longhands behind them | 250 |
 | Classified | 250 |
-| Implemented | 179 |
-| Parsed and cascaded, not yet implemented | 71 |
+| Implemented | 188 |
+| Parsed and cascaded, not yet implemented | 62 |
 | Classified as unavailable from the engine | 0 |
-| Shown by probe to change what a frame produces | 160 |
+| Shown by probe to change what a frame produces | 169 |
 | Out of reach: defined by the engine for another target only | 172 |
 | Out of reach: register rows | 7 |
 | Not yet implemented: register rows | 0 |
@@ -149,10 +149,10 @@ it. It is not a plan.
 | `background-color` | implemented | changes what a frame produces | zgui-paint::lower::background |
 | `background-image` | implemented | changes what a frame produces | zgui-paint::lower::background |
 | `background-origin` | unread | no observable change | a background layer fills the box it is painted on |
-| `background-position-x` | unread | no observable change | a background layer fills the box it is painted on |
-| `background-position-y` | unread | no observable change | a background layer fills the box it is painted on |
-| `background-repeat` | unread | no observable change | a background layer fills the box it is painted on |
-| `background-size` | unread | no observable change | a background layer fills the box it is painted on |
+| `background-position-x` | implemented | changes what a frame produces | zgui-paint::lower::background |
+| `background-position-y` | implemented | changes what a frame produces | zgui-paint::lower::background |
+| `background-repeat` | implemented | changes what a frame produces | zgui-paint::lower::background |
+| `background-size` | implemented | changes what a frame produces | zgui-paint::lower::background |
 | `baseline-shift` | unread | no observable change | no probe has shown it moving an edge, and no module reads it |
 | `baseline-source` | unread | no observable change | no probe has shown it moving an edge, and no module reads it |
 | `block-size` | implemented | changes what a frame produces | zgui-layout::style::core |
@@ -288,13 +288,13 @@ it. It is not a plan.
 | `margin-top` | implemented | changes what a frame produces | zgui-layout::style::core |
 | `mask-clip` | unread | no observable change | nothing paints yet, so nothing reads it |
 | `mask-composite` | unread | no observable change | nothing paints yet, so nothing reads it |
-| `mask-image` | unread | no observable change | nothing paints yet, so nothing reads it |
+| `mask-image` | implemented | changes what a frame produces | zgui-paint::lower::mask |
 | `mask-mode` | unread | no observable change | nothing paints yet, so nothing reads it |
 | `mask-origin` | unread | no observable change | nothing paints yet, so nothing reads it |
-| `mask-position-x` | unread | no observable change | nothing paints yet, so nothing reads it |
-| `mask-position-y` | unread | no observable change | nothing paints yet, so nothing reads it |
-| `mask-repeat` | unread | no observable change | nothing paints yet, so nothing reads it |
-| `mask-size` | unread | no observable change | nothing paints yet, so nothing reads it |
+| `mask-position-x` | implemented | changes what a frame produces | zgui-paint::lower::mask |
+| `mask-position-y` | implemented | changes what a frame produces | zgui-paint::lower::mask |
+| `mask-repeat` | implemented | changes what a frame produces | zgui-paint::lower::mask |
+| `mask-size` | implemented | changes what a frame produces | zgui-paint::lower::mask |
 | `mask-type` | unread | no observable change | nothing paints yet, so nothing reads it |
 | `max-block-size` | implemented | changes what a frame produces | zgui-layout::style::core |
 | `max-height` | implemented | changes what a frame produces | zgui-layout::style::core |

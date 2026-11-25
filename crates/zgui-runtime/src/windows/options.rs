@@ -196,7 +196,22 @@ impl WindowOptions {
     ///
     /// Each call adds one sheet. The sheets cascade in call order.
     pub fn with_stylesheet(mut self, css: impl Into<String>) -> Self {
-        self.runtime.window_stylesheets.push(css.into());
+        self.runtime
+            .window_stylesheets
+            .push(crate::WindowSheet::from(css.into()));
+        self
+    }
+
+    /// Adds a stylesheet of this window's own whose `url()` references resolve against `base`.
+    pub fn with_stylesheet_at(
+        mut self,
+        css: impl Into<String>,
+        base: zgui_css::resources::ResourceBase,
+    ) -> Self {
+        self.runtime.window_stylesheets.push(crate::WindowSheet {
+            css: css.into(),
+            base: Some(base),
+        });
         self
     }
 

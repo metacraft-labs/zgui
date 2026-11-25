@@ -332,7 +332,10 @@ fn marks_pixels(store: &LayoutStore, key: BoxKey, kind: FragmentKind) -> bool {
         return false;
     };
     let background = crate::lower::background::of(style);
-    if background.color.alpha() > 0.0 || !background.layers.is_empty() {
+    if background.color.alpha() > 0.0
+        || !background.layers.is_empty()
+        || !background.pictures.is_empty()
+    {
         return true;
     }
     if !crate::lower::border::of(style).invisible {

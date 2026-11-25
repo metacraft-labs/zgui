@@ -20,6 +20,7 @@ pub mod cache;
 pub mod clip;
 pub mod filter;
 pub mod key;
+pub mod mask;
 pub mod outline;
 pub mod scrollbar;
 pub mod shader;
@@ -37,6 +38,7 @@ pub use crate::lower::background::BackgroundStyle;
 pub use crate::lower::border::BorderPaint;
 pub use crate::lower::clip::ClipShape;
 pub use crate::lower::filter::GroupPaint;
+pub use crate::lower::mask::MaskStyle;
 pub use crate::lower::outline::OutlinePaint;
 pub use crate::lower::scrollbar::ScrollbarStyle;
 pub use crate::lower::shader::{NamedShader, ShaderStyle};
@@ -61,6 +63,10 @@ pub struct PaintStyle {
     pub color: Color,
     /// What is painted behind the box's content.
     pub background: BackgroundStyle,
+    /// The pictures that cut the box out, when `mask-image` names any.
+    ///
+    /// Boxed for the reason [`shader`](Self::shader) is: it is almost always absent.
+    pub mask: Option<Box<MaskStyle>>,
     /// How the border is drawn.
     pub border: BorderPaint,
     /// The `box-shadow` list, in the order written.
@@ -126,6 +132,7 @@ impl PaintStyle {
     pub fn paints_nothing(&self) -> bool {
         !self.visible
             || (self.background.is_invisible()
+                && self.mask.is_none()
                 && self.border.invisible
                 && self.shadows.is_empty()
                 && self.outline.is_none()
@@ -168,6 +175,7 @@ pub fn lower(style: &ComputedStyle, scale: f32) -> PaintStyle {
         } else {
             background::of(style)
         },
+        mask: mask::of(style),
         border: border::of(style),
         shadows: shadow::box_shadows(style, scale),
         text_shadows: shadow::text_shadows(style, scale),

@@ -881,7 +881,9 @@ impl Window {
                     self.report_caret();
                 }
             }
-            Command::InstallStylesheet { name, css } => self.install_view_sheet(&name, &css),
+            Command::InstallStylesheet { name, css, base } => {
+                self.install_view_sheet(&name, &css, base.as_ref());
+            }
             Command::RemoveStylesheet { name } => self.remove_view_sheet(&name),
             Command::Synthesize { node, event } => self.synthesize(node, event, timestamp),
             Command::Scroll {

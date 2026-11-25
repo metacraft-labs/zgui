@@ -363,7 +363,32 @@ impl App {
     ///
     /// Each call adds one sheet. The sheets cascade in call order.
     pub fn with_stylesheet(mut self, css: impl Into<String>) -> Self {
-        self.options.stylesheets.push(css.into());
+        self.options
+            .stylesheets
+            .push(crate::WindowSheet::from(css.into()));
+        self
+    }
+
+    /// Adds a stylesheet of the application's own, whose `url()` references resolve against
+    /// `base`.
+    ///
+    /// The sheet's `@font-face` faces and its `background-image` and `mask-image` pictures load
+    /// from the files `base` resolves them to, inside `base`'s root.
+    pub fn with_stylesheet_at(
+        mut self,
+        css: impl Into<String>,
+        base: zgui_css::resources::ResourceBase,
+    ) -> Self {
+        self.options.stylesheets.push(crate::WindowSheet {
+            css: css.into(),
+            base: Some(base),
+        });
+        self
+    }
+
+    /// Installs what loads the faces every window's sheets declare with `@font-face`.
+    pub fn with_font_faces(mut self, loader: crate::FontFaceLoader) -> Self {
+        self.options.font_faces = Some(loader);
         self
     }
 

@@ -39,3 +39,56 @@ pub use style::values::generics::image::ShapeExtent;
 pub use style::values::specified::position::HorizontalPositionKeyword;
 /// The vertical half of a corner keyword.
 pub use style::values::specified::position::VerticalPositionKeyword;
+
+/// How large one background or mask layer is drawn, read off a `background-size` or `mask-size`
+/// entry.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LayerSize {
+    /// A width and a height, either of which may be `auto`. A percentage is of the positioning
+    /// area.
+    Explicit(
+        Option<crate::values::length::LengthPercentage>,
+        Option<crate::values::length::LengthPercentage>,
+    ),
+    /// As large as fits inside the positioning area, keeping the image's aspect ratio.
+    Contain,
+    /// As small as covers the positioning area, keeping the image's aspect ratio.
+    Cover,
+}
+
+impl LayerSize {
+    /// The size one `background-size` or `mask-size` entry states.
+    pub fn of(value: &BackgroundSizeValue) -> Self {
+        use style::values::generics::background::GenericBackgroundSize as Size;
+        use style::values::generics::length::GenericLengthPercentageOrAuto as OrAuto;
+        let side = |value: &OrAuto<
+            crate::values::length::NonNegative<crate::values::length::LengthPercentage>,
+        >| match value {
+            OrAuto::LengthPercentage(length) => Some(length.0.clone()),
+            OrAuto::Auto => None,
+        };
+        match value {
+            Size::ExplicitSize { width, height } => Self::Explicit(side(width), side(height)),
+            Size::Contain => Self::Contain,
+            Size::Cover => Self::Cover,
+        }
+    }
+}
+
+/// Whether one `background-repeat` or `mask-repeat` entry repeats the image along each axis.
+///
+/// `space` and `round` are read as `repeat`: they tile the image too, with the gaps and the scale
+/// they choose left out.
+pub fn repeats(value: &BackgroundRepeatValue) -> (bool, bool) {
+    use style::values::specified::background::BackgroundRepeatKeyword as Keyword;
+    let tiles = |keyword: Keyword| keyword != Keyword::NoRepeat;
+    (tiles(value.0), tiles(value.1))
+}
+
+/// The resolved URL an image names, when it is a valid `url()`.
+pub fn image_url(value: &ImageValue) -> Option<&str> {
+    match value {
+        ImageValue::Url(url) => Some(url.url()?.as_str()),
+        _ => None,
+    }
+}

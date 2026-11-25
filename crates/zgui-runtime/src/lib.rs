@@ -126,9 +126,11 @@ pub use crate::window::frame::FrameReport;
 pub use crate::window::present::PresentPace;
 pub use crate::window::resize::ResizePace;
 pub use crate::window::text_aa::TextAntialiasing;
-pub use crate::window::{MAINTENANCE_DELAY, Window, WindowContent};
+pub use crate::window::{FontFaceLoader, MAINTENANCE_DELAY, Window, WindowContent, WindowSheet};
 pub use crate::windows::{
     CloseGuard, FocusGuard, WindowHandle, WindowId, Windows, on_close_request, try_use_window,
     try_use_windows, use_input_region, use_window, use_windows,
 };
 pub use crate::windows::{LayerOptions, PopupOptions, WindowOptions};
+/// The files and `data:` URIs a style sheet names, and the rule that decides which may be read.
+pub use zgui_css::resources;

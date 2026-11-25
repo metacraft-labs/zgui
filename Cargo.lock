@@ -5592,6 +5592,7 @@ dependencies = [
 name = "zgui"
 version = "0.1.0"
 dependencies = [
+ "tracing",
  "web-time",
  "zgui-atlas",
  "zgui-bits",

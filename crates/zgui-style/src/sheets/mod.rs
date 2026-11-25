@@ -7,11 +7,13 @@
 //! | [`set`] | which sheets are installed, in what order, and what a dropped handle means |
 //! | [`replace`] | rewriting a sheet's text without moving it in the cascade |
 //! | [`errors`] | what the parser dropped, and where |
+//! | [`faces`] | the `@font-face` rules a parsed sheet holds |
 //! | [`loader`] | where the source of a referenced sheet comes from |
 //! | [`ua`] | this framework's own user-agent sheet |
 //! | [`webkit_scrollbar`] | `::-webkit-scrollbar` rules carried to the scroll container they style |
 
 pub mod errors;
+pub mod faces;
 pub mod loader;
 pub mod origin;
 pub mod parse;
@@ -41,6 +43,10 @@ pub enum SheetSource<'a> {
     /// outcome the parser gives an `@import` that cannot be resolved: the reference is visible in
     /// the diagnostics rather than being a rule set that silently lacks a file.
     Named(&'a str),
+    /// The text itself, with the base its `url()` references resolve against.
+    ///
+    /// The sheet's resources are read inside the base's root; see [`zgui_css::resources`].
+    Based(&'a str, &'a zgui_css::resources::ResourceBase),
 }
 
 /// The stylesheets installed in one rule set.
@@ -51,6 +57,8 @@ pub(crate) struct Sheets {
     pub(crate) sink: DiagnosticSink,
     /// The base relative references are resolved against.
     pub(crate) url: UrlExtraData,
+    /// The `@font-face` rules of the sheets parsed since they were last taken.
+    pub(crate) faces: std::sync::Mutex<Vec<zgui_css::resources::FontFace>>,
 }
 
 impl Sheets {
@@ -60,6 +68,7 @@ impl Sheets {
             set: SheetSet::new(),
             sink: DiagnosticSink::new(),
             url: parse::base_url(),
+            faces: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -113,14 +122,24 @@ impl Sheets {
         origin: SheetOrigin,
         source: SheetSource<'_>,
     ) -> style::stylesheets::DocumentStyleSheet {
+        let based;
+        let url = match source {
+            SheetSource::Based(_, base) => {
+                based = parse::url_of(base.url()).unwrap_or_else(|| self.url.clone());
+                &based
+            }
+            SheetSource::Text(_) | SheetSource::Named(_) => &self.url,
+        };
         let context = ParseContext {
             lock,
-            url: &self.url,
+            url,
             loader,
             sink: &self.sink,
         };
         let text = match source {
-            SheetSource::Text(text) => std::borrow::Cow::Borrowed(text),
+            SheetSource::Text(text) | SheetSource::Based(text, _) => {
+                std::borrow::Cow::Borrowed(text)
+            }
             SheetSource::Named(name) => match loader.load(self.url.0.as_str(), name) {
                 zgui_dom::SheetRequest::Ready(text) => {
                     std::borrow::Cow::Owned(text.as_ref().to_owned())
@@ -135,6 +154,24 @@ impl Sheets {
                 }
             },
         };
-        context.parse(&text, origin.to_engine())
+        let sheet = context.parse(&text, origin.to_engine());
+        let found = faces::of(&sheet, lock);
+        if !found.is_empty() {
+            self.faces
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend(found);
+        }
+        sheet
+    }
+
+    /// The `@font-face` rules of every sheet parsed since this was last called, in parse order.
+    pub(crate) fn take_faces(&self) -> Vec<zgui_css::resources::FontFace> {
+        std::mem::take(
+            &mut *self
+                .faces
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 }

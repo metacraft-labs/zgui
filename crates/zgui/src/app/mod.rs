@@ -484,6 +484,33 @@ impl App {
         self
     }
 
+    /// Adds a style sheet whose `url()` references resolve against `base`, as a browser resolves
+    /// them against the sheet's location.
+    ///
+    /// The faces of the sheet's `@font-face` rules join [`App::fonts`] under the family each rule
+    /// declares, and its `background-image` and `mask-image` pictures draw. A reference loads only
+    /// when it resolves to a `data:` URI or to a file inside `base`'s root.
+    ///
+    /// ```no_run
+    /// use zgui::prelude::*;
+    /// use zgui::resources::ResourceBase;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let base = ResourceBase::directory("assets/styles")?.with_root("assets")?;
+    /// let css = std::fs::read_to_string("assets/styles/app.css")?;
+    /// app().with_stylesheet_at(css, base).run(|| view! { column() })?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_stylesheet_at(
+        mut self,
+        css: impl Into<String>,
+        base: zgui_runtime::resources::ResourceBase,
+    ) -> Self {
+        self.inner = self.inner.with_stylesheet_at(css, base);
+        self
+    }
+
     /// Installs `probe`, which is told about every frame of every window this opens.
     ///
     /// The seam a diagnostic tool attaches to. It is what an inspector overlay is wired in through:
@@ -706,6 +733,7 @@ impl App {
             .with_text_engine(Box::new(move || {
                 Box::new(zgui_layout::Paragraphs::new(shaping.shaper()))
             }))
+            .with_font_faces(fonts::face_loader(&fonts))
             .with_glyph_raster(Box::new(move || fonts.raster()))
             // Installed by default beside the default renderer: an application with no surface
             // elements pays one virtual call per frame, and one with them needs no wiring.

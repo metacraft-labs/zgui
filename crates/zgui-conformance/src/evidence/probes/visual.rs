@@ -6,6 +6,14 @@
 
 use crate::evidence::probe::Probe;
 
+/// A background picture, which the placing properties of a background layer are read for.
+///
+/// A gradient fills the whole box, so only a picture layer shows where a layer is placed.
+const PICTURE: &str = "background-image: url(data:,x)";
+
+/// A mask picture, which the placing properties of a mask layer are read for.
+const MASK: &str = "mask-image: url(data:,x)";
+
 /// One probe per longhand in this group.
 pub static PROBES: &[Probe] = &[
     Probe::new("backdrop_filter", "backdrop-filter: blur(4px)"),
@@ -18,10 +26,18 @@ pub static PROBES: &[Probe] = &[
         "background-image: linear-gradient(red, blue)",
     ),
     Probe::new("background_origin", "background-origin: content-box"),
-    Probe::new("background_position_x", "background-position-x: 7px"),
-    Probe::new("background_position_y", "background-position-y: 9px"),
-    Probe::new("background_repeat", "background-repeat: no-repeat"),
-    Probe::new("background_size", "background-size: 11px 13px"),
+    Probe::in_context(
+        "background_position_x",
+        PICTURE,
+        "background-position-x: 7px",
+    ),
+    Probe::in_context(
+        "background_position_y",
+        PICTURE,
+        "background-position-y: 9px",
+    ),
+    Probe::in_context("background_repeat", PICTURE, "background-repeat: no-repeat"),
+    Probe::in_context("background_size", PICTURE, "background-size: 11px 13px"),
     Probe::in_context(
         "border_block_end_color",
         "border-block-end-style: solid",
@@ -173,13 +189,13 @@ pub static PROBES: &[Probe] = &[
     Probe::new("list_style_type", "list-style-type: square"),
     Probe::new("mask_clip", "mask-clip: content-box"),
     Probe::new("mask_composite", "mask-composite: subtract"),
-    Probe::new("mask_image", "mask-image: linear-gradient(red, blue)"),
+    Probe::new("mask_image", MASK),
     Probe::new("mask_mode", "mask-mode: luminance"),
     Probe::new("mask_origin", "mask-origin: content-box"),
-    Probe::new("mask_position_x", "mask-position-x: 7px"),
-    Probe::new("mask_position_y", "mask-position-y: 9px"),
-    Probe::new("mask_repeat", "mask-repeat: no-repeat"),
-    Probe::new("mask_size", "mask-size: 11px 13px"),
+    Probe::in_context("mask_position_x", MASK, "mask-position-x: 7px"),
+    Probe::in_context("mask_position_y", MASK, "mask-position-y: 9px"),
+    Probe::in_context("mask_repeat", MASK, "mask-repeat: no-repeat"),
+    Probe::in_context("mask_size", MASK, "mask-size: 11px 13px"),
     Probe::new("mask_type", "mask-type: alpha"),
     Probe::new("mix_blend_mode", "mix-blend-mode: multiply"),
     Probe::new("opacity", "opacity: 0.5"),

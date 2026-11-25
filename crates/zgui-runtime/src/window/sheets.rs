@@ -16,13 +16,20 @@ impl Window {
     /// Replacement keeps the sheet's place in the cascade. Removing and adding would move it to
     /// the end of the author origin, where it would begin winning against every sheet that used to
     /// beat it — so a theme that changed a colour would also, invisibly, change what wins.
-    pub(crate) fn install_view_sheet(&mut self, name: &str, css: &str) {
+    pub(crate) fn install_view_sheet(
+        &mut self,
+        name: &str,
+        css: &str,
+        base: Option<&zgui_css::resources::ResourceBase>,
+    ) {
+        let source = match base {
+            Some(base) => SheetSource::Based(css, base),
+            None => SheetSource::Text(css),
+        };
         let document = self.document.borrow();
         let diagnostics = match self.view_sheets.get(name) {
             Some(handle) => {
-                let diagnostics =
-                    self.engine
-                        .replace_sheet(&document, handle, SheetSource::Text(css));
+                let diagnostics = self.engine.replace_sheet(&document, handle, source);
                 // Replaced rules may have styled any element in the tree, and rules that are gone
                 // leave no selector to invalidate by.
                 self.engine.force_author_rules_dirty();
@@ -34,7 +41,7 @@ impl Window {
                 // style yet, so they are styled against it in this frame whatever it invalidates.
                 let (handle, diagnostics) =
                     self.engine
-                        .add_sheet(&document, SheetOrigin::Author, SheetSource::Text(css));
+                        .add_sheet(&document, SheetOrigin::Author, source);
                 self.view_sheets.insert(name.to_owned(), handle);
                 diagnostics
             }
@@ -47,6 +54,24 @@ impl Window {
                 "{}",
                 report.message
             );
+        }
+        self.load_font_faces();
+    }
+
+    /// Hands the `@font-face` rules of the sheets installed since the last call to the window's
+    /// font loader, when it has one.
+    pub(crate) fn load_font_faces(&mut self) {
+        let faces = self.engine.take_font_faces();
+        if faces.is_empty() {
+            return;
+        }
+        match &self.font_faces {
+            Some(loader) => loader.load(&faces),
+            None => tracing::debug!(
+                target: "zgui::css",
+                faces = faces.len(),
+                "a sheet declares faces and the window has no font loader"
+            ),
         }
     }
 

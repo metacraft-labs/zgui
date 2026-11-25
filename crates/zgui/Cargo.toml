@@ -53,6 +53,8 @@ zgui-text-parley = { path = "../zgui-text-parley", version = "0.1.0" }
 zgui-view = { path = "../zgui-view", version = "0.1.0" }
 zgui-view-macro = { path = "../zgui-view-macro", version = "0.1.0" }
 zgui-vocab = { path = "../zgui-vocab", version = "0.1.0" }
+# What a face named by a style sheet that does not load is reported through.
+tracing.workspace = true
 
 [dev-dependencies]
 # Driving the same application over buffers, which is how the wiring above is asserted on with no

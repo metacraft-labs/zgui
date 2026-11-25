@@ -249,6 +249,14 @@ impl StyleEngine {
         &self.refreshed_animations
     }
 
+    /// The `@font-face` rules of every sheet installed or replaced since this was last called.
+    ///
+    /// The engine keeps the rules and loads nothing. Whoever holds the window's faces takes these
+    /// after installing sheets and loads them, before the text they name is shaped.
+    pub fn take_font_faces(&self) -> Vec<zgui_css::resources::FontFace> {
+        self.sheets.take_faces()
+    }
+
     /// Installs a sheet at the end of `origin`'s sheets.
     ///
     /// Never fails. An unrecognised declaration drops that declaration, a rejected selector drops

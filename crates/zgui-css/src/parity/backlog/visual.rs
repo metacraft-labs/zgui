@@ -32,13 +32,8 @@ crate::register_properties! {
     list_style_type => Support::Ignored(NOTE),
     mask_clip => Support::Ignored(NOTE),
     mask_composite => Support::Ignored(NOTE),
-    mask_image => Support::Ignored(NOTE),
     mask_mode => Support::Ignored(NOTE),
     mask_origin => Support::Ignored(NOTE),
-    mask_position_x => Support::Ignored(NOTE),
-    mask_position_y => Support::Ignored(NOTE),
-    mask_repeat => Support::Ignored(NOTE),
-    mask_size => Support::Ignored(NOTE),
     mask_type => Support::Ignored(NOTE),
     quotes => Support::Ignored(NOTE),
 }

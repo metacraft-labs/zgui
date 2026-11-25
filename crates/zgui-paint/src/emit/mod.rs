@@ -9,6 +9,7 @@ pub mod group;
 pub mod highlight;
 pub mod inline;
 pub mod paint;
+pub mod picture;
 pub mod replaced;
 pub mod scrollbar;
 pub mod shader;

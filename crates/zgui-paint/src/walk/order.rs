@@ -149,15 +149,35 @@ pub(crate) fn fragment_tracked(
         _ => !style.paints_nothing(),
     };
     if draws && !emission.nested_inline {
-        pushed += box_::outer_shadows(scene, &style, emission.box_placement);
-        pushed += box_::background_and_border(
-            scene,
-            &style,
-            emission.box_placement,
-            emission.shaders,
-            emission.pointer,
-        );
-        pushed += box_::inset_shadows(scene, &style, emission.box_placement);
+        if style.mask.is_some() {
+            // A mask cuts out everything the box draws. What is drawn is its background colour
+            // through the mask's pictures; the shadows and the border are left out with the rest
+            // of what the mask removes.
+            pushed += crate::emit::picture::masked(
+                scene,
+                &style,
+                emission.box_placement,
+                emission.vector_masks,
+                fragment.key.index(),
+            );
+        } else {
+            pushed += box_::outer_shadows(scene, &style, emission.box_placement);
+            pushed += box_::background_and_border(
+                scene,
+                &style,
+                emission.box_placement,
+                emission.shaders,
+                emission.pointer,
+            );
+            pushed += crate::emit::picture::background(
+                scene,
+                &style,
+                emission.box_placement,
+                emission.vector_masks,
+                fragment.key.index(),
+            );
+            pushed += box_::inset_shadows(scene, &style, emission.box_placement);
+        }
     }
     let content = content_tracked(scene, fragment, &style, emission);
     pushed += content.pushed;

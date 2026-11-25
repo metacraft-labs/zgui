@@ -299,6 +299,26 @@ pub trait ViewHost {
     /// host from the enclosing window.
     fn install_stylesheet(&self, name: &str, css: &str);
 
+    /// The same, for a sheet read from the directory `dir`.
+    ///
+    /// The sheet's relative `url()` references resolve against `dir`, as a browser resolves them
+    /// against a sheet's location, and they are read inside `root`, which holds `dir`. The faces of
+    /// the sheet's `@font-face` rules and the pictures of its `background-image` and `mask-image`
+    /// declarations load from there.
+    ///
+    /// A host that loads no resources installs the text and ignores the directories, which is what
+    /// the default does.
+    fn install_stylesheet_at(
+        &self,
+        name: &str,
+        css: &str,
+        dir: &std::path::Path,
+        root: &std::path::Path,
+    ) {
+        let _ = (dir, root);
+        self.install_stylesheet(name, css);
+    }
+
     /// Removes the sheet installed under `name`. Removing one that is not installed does nothing.
     fn remove_stylesheet(&self, name: &str);
 }

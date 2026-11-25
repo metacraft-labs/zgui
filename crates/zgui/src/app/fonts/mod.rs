@@ -64,6 +64,19 @@ pub use crate::app::fonts::pending::system_collections_built;
 pub struct Fonts {
     /// The collection, shared with everything built from it, once it exists.
     system: Arc<Pending>,
+    /// The URL and family of every `@font-face` face registered, so a sheet installed twice
+    /// registers its faces once.
+    loaded: Arc<std::sync::Mutex<std::collections::HashSet<(String, String)>>>,
+}
+
+/// What loads the faces of every window's `@font-face` rules into `fonts`.
+pub(crate) fn face_loader(fonts: &Fonts) -> zgui_runtime::FontFaceLoader {
+    let fonts = fonts.clone();
+    zgui_runtime::FontFaceLoader::new(move |faces| {
+        for face in faces {
+            fonts.register_face(face);
+        }
+    })
 }
 
 impl Default for Fonts {
@@ -90,6 +103,7 @@ impl Fonts {
         {
             Self {
                 system: Arc::new(Pending::system()),
+                loaded: Arc::default(),
             }
         }
     }
@@ -104,6 +118,7 @@ impl Fonts {
             system: Arc::new(Pending::ready(FontSystem::new(
                 FontSystemOptions::registered_only(),
             ))),
+            loaded: Arc::default(),
         }
     }
 
@@ -120,6 +135,41 @@ impl Fonts {
             .get()
             .register(data, family.map(zgui_view::Ident::new))
             .map(|_| ())
+    }
+
+    /// Registers the face of one `@font-face` rule, unless a face from the same URL is held.
+    ///
+    /// The first source of the rule that loads as TrueType or OpenType is registered under the
+    /// rule's family. Returns whether a face was added.
+    pub(crate) fn register_face(&self, face: &zgui_runtime::resources::FontFace) -> bool {
+        let (url, bytes) = match face.load() {
+            Ok(loaded) => loaded,
+            Err(passed) => {
+                tracing::warn!(
+                    target: "zgui::css",
+                    family = %face.family,
+                    "no source of the face loads: {}",
+                    passed.join("; ")
+                );
+                return false;
+            }
+        };
+        {
+            let mut loaded = self
+                .loaded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !loaded.insert((url.clone(), face.family.clone())) {
+                return false;
+            }
+        }
+        match self.register(Arc::new(bytes), Some(&face.family)) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(target: "zgui::css", family = %face.family, %url, %error, "the face is not a font this engine reads");
+                false
+            }
+        }
     }
 
     /// What answers the cascade's font-metric questions.

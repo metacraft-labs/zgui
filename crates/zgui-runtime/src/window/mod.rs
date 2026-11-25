@@ -87,13 +87,13 @@ pub const ATLAS_SOFT_BYTES: u64 = 64 * 1024 * 1024;
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct WindowContent {
-    /// The application's own stylesheets, as text. They cascade in this order.
-    pub stylesheets: Vec<String>,
+    /// The application's own stylesheets. They cascade in this order.
+    pub stylesheets: Vec<WindowSheet>,
     /// This window's own sheets, cascaded after the application's, in this order.
     ///
     /// For the window that is not the application: an inspector, a preferences panel, a palette.
     /// Later in the cascade than the application's own sheets, so a rule of equal weight here wins.
-    pub window_stylesheets: Vec<String>,
+    pub window_stylesheets: Vec<WindowSheet>,
     /// What to tell about each frame after it has been produced, if anything.
     ///
     /// An option and not a list: one seam, one occupant. A window with several probes would have
@@ -101,6 +101,62 @@ pub struct WindowContent {
     /// a tool that wants to feed two consumers can do that on its own side without the loop
     /// growing an opinion about it.
     pub probe: Option<Rc<dyn crate::probe::FrameProbe>>,
+    /// What loads the faces the sheets' `@font-face` rules declare, if anything does.
+    pub font_faces: Option<FontFaceLoader>,
+}
+
+/// One style sheet a window opens with: its text, and the base its `url()` references resolve
+/// against.
+///
+/// A sheet with no base resolves its relative references against `zgui:///`, which no loader
+/// reads, so only its `data:` URIs load. See [`zgui_css::resources`] for the rule a base sets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowSheet {
+    /// The text.
+    pub css: String,
+    /// Where its references resolve, and which directory its `file:` URLs may read.
+    pub base: Option<zgui_css::resources::ResourceBase>,
+}
+
+impl From<String> for WindowSheet {
+    fn from(css: String) -> Self {
+        Self { css, base: None }
+    }
+}
+
+impl From<&str> for WindowSheet {
+    fn from(css: &str) -> Self {
+        Self::from(css.to_owned())
+    }
+}
+
+/// Loads the faces a window's sheets declare with `@font-face`.
+///
+/// The style engine keeps the rules and fetches nothing. Whoever holds the faces a window shapes
+/// with installs one of these, and the window calls it with the rules of every sheet it installs,
+/// before the text of that frame is shaped.
+#[derive(Clone)]
+pub struct FontFaceLoader(Rc<LoadFaces>);
+
+/// What a [`FontFaceLoader`] calls.
+type LoadFaces = dyn Fn(&[zgui_css::resources::FontFace]);
+
+impl FontFaceLoader {
+    /// A loader that calls `load`.
+    pub fn new(load: impl Fn(&[zgui_css::resources::FontFace]) + 'static) -> Self {
+        Self(Rc::new(load))
+    }
+
+    /// Loads `faces`.
+    pub fn load(&self, faces: &[zgui_css::resources::FontFace]) {
+        (self.0)(faces);
+    }
+}
+
+impl core::fmt::Debug for FontFaceLoader {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("FontFaceLoader")
+    }
 }
 
 impl WindowContent {
@@ -120,6 +176,10 @@ impl WindowContent {
                 .cloned()
                 .collect(),
             probe: window.probe.clone().or_else(|| self.probe.clone()),
+            font_faces: window
+                .font_faces
+                .clone()
+                .or_else(|| self.font_faces.clone()),
         }
     }
 }
@@ -429,6 +489,8 @@ pub struct Window {
     /// origin, where it would start beating every sheet it used to lose to — which is a theme
     /// switch that silently changes what wins.
     view_sheets: rustc_hash::FxHashMap<String, SheetHandle>,
+    /// What loads the faces the window's sheets declare.
+    font_faces: Option<FontFaceLoader>,
     /// The surface this frame is being built for.
     viewport: Viewport,
     /// The surface extent the viewport above was derived from, in device pixels.
@@ -676,14 +738,17 @@ impl Window {
         let mut sheets = Vec::new();
         // The application's sheets first and this window's own after them, each in call order, so
         // a rule of equal weight in a later sheet wins.
-        for css in options
+        for sheet in options
             .stylesheets
             .iter()
             .chain(&options.window_stylesheets)
         {
             let borrowed = document.borrow();
-            let (handle, diagnostics) =
-                engine.add_sheet(&borrowed, SheetOrigin::Author, SheetSource::Text(css));
+            let source = match &sheet.base {
+                Some(base) => SheetSource::Based(&sheet.css, base),
+                None => SheetSource::Text(&sheet.css),
+            };
+            let (handle, diagnostics) = engine.add_sheet(&borrowed, SheetOrigin::Author, source);
             for report in diagnostics.iter() {
                 tracing::warn!(target: "zgui::css", "{}", report.message);
             }
@@ -730,7 +795,7 @@ impl Window {
         });
         built.mount(&dom_handle, root, None);
 
-        Self {
+        let mut window = Self {
             surface,
             document,
             dom,
@@ -815,6 +880,7 @@ impl Window {
             view: Some(built),
             _sheets: sheets,
             view_sheets: rustc_hash::FxHashMap::default(),
+            font_faces: options.font_faces.clone(),
             viewport,
             scale,
             scheme: viewport.scheme,
@@ -853,7 +919,10 @@ impl Window {
             serviced_revision: Cell::new(0),
             handle,
             cursor: zgui_platform::CursorStyle::Default,
-        }
+        };
+        // The faces the opening sheets declare are loaded before the first frame shapes any text.
+        window.load_font_faces();
+        window
     }
 
     /// The handle the application holds this window by.

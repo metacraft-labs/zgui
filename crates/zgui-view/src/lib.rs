@@ -128,7 +128,7 @@ pub use crate::node_ref::{
     ListenerGuard, NodeRef, ObservationRegistry, focus_is_text_entry, focused_node,
 };
 pub use crate::scroll::{ScrollBehavior, ScrollPosition, ScrollTarget};
-pub use crate::sheet::{Stylesheet, install_stylesheet, remove_stylesheet};
+pub use crate::sheet::{Stylesheet, install_stylesheet, install_stylesheet_at, remove_stylesheet};
 pub use crate::time::{
     FrameHandle, IntervalHandle, TimeoutHandle, Timers, request_frame, set_interval, set_timeout,
 };

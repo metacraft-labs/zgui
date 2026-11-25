@@ -12,6 +12,7 @@
 //! | [`cache`] | [`ContentCache`], the atlas both halves share and the images registered against it |
 //! | [`glyphs`] | shaped runs into rasterised, positioned glyphs |
 //! | [`images`] | replaced content into atlas tiles and external textures |
+//! | [`pictures`] | the pictures `background-image` and `mask-image` name, read once per URL |
 //! | [`vectors`] | path notation into placed curves a rasteriser encodes once |
 //!
 //! # The one rule about ordering
@@ -27,6 +28,7 @@ pub mod cache;
 pub mod custom;
 pub mod glyphs;
 pub mod images;
+pub mod pictures;
 pub mod probe;
 pub mod shader;
 pub mod vectors;

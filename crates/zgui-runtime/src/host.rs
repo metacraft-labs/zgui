@@ -62,6 +62,8 @@ pub enum Command {
         name: String,
         /// Its text.
         css: String,
+        /// The base its `url()` references resolve against, when it has one.
+        base: Option<zgui_css::resources::ResourceBase>,
     },
     /// Remove the style sheet installed under this name.
     RemoveStylesheet {
@@ -121,10 +123,11 @@ impl core::fmt::Debug for Command {
             Self::CapturePointer(node) => {
                 formatter.debug_tuple("CapturePointer").field(node).finish()
             }
-            Self::InstallStylesheet { name, css } => formatter
+            Self::InstallStylesheet { name, css, base } => formatter
                 .debug_struct("InstallStylesheet")
                 .field("name", name)
                 .field("css", css)
+                .field("base", base)
                 .finish(),
             Self::RemoveStylesheet { name } => formatter
                 .debug_struct("RemoveStylesheet")
@@ -217,7 +220,8 @@ pub struct RuntimeHost {
     /// command and therefore asks for no frame. A component installs its own sheet from every
     /// instance's body, and a list of two hundred rows would otherwise wake the loop two hundred
     /// times to replace a sheet with itself.
-    sheets: RefCell<rustc_hash::FxHashMap<String, String>>,
+    sheets:
+        RefCell<rustc_hash::FxHashMap<String, (String, Option<zgui_css::resources::ResourceBase>)>>,
     /// What is selected in each editable node.
     ///
     /// Held here rather than in the document because a selection is state about the document and
@@ -262,6 +266,25 @@ pub struct RuntimeHost {
 }
 
 impl RuntimeHost {
+    /// Records `css` under `name` and asks the window to install it, unless it is installed as is.
+    fn install(&self, name: &str, css: &str, base: Option<zgui_css::resources::ResourceBase>) {
+        {
+            let mut sheets = self.sheets.borrow_mut();
+            if sheets
+                .get(name)
+                .is_some_and(|(installed, held)| installed == css && *held == base)
+            {
+                return;
+            }
+            sheets.insert(name.to_owned(), (css.to_owned(), base.clone()));
+        }
+        self.issue(Command::InstallStylesheet {
+            name: name.to_owned(),
+            css: css.to_owned(),
+            base,
+        });
+    }
+
     /// Builds the host for one window.
     ///
     /// Call inside the window's own reactive scope: the focus signal is created here and must
@@ -864,17 +887,30 @@ impl ViewHost for RuntimeHost {
     }
 
     fn install_stylesheet(&self, name: &str, css: &str) {
+        self.install(name, css, None);
+    }
+
+    fn install_stylesheet_at(
+        &self,
+        name: &str,
+        css: &str,
+        dir: &std::path::Path,
+        root: &std::path::Path,
+    ) {
+        match zgui_css::resources::ResourceBase::directory(dir)
+            .and_then(|base| base.with_root(root))
         {
-            let mut sheets = self.sheets.borrow_mut();
-            if sheets.get(name).is_some_and(|installed| installed == css) {
-                return;
+            Ok(base) => self.install(name, css, Some(base)),
+            Err(error) => {
+                tracing::warn!(
+                    target: "zgui::css",
+                    sheet = name,
+                    %error,
+                    "the sheet's directories cannot be read from; it is installed with no base"
+                );
+                self.install(name, css, None);
             }
-            sheets.insert(name.to_owned(), css.to_owned());
         }
-        self.issue(Command::InstallStylesheet {
-            name: name.to_owned(),
-            css: css.to_owned(),
-        });
     }
 
     fn remove_stylesheet(&self, name: &str) {

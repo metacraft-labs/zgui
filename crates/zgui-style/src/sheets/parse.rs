@@ -137,6 +137,14 @@ impl StylesheetLoader for ImportBridge<'_> {
     }
 }
 
+/// The base `url` names, or nothing when it is not a well-formed absolute URL.
+pub(crate) fn url_of(url: &str) -> Option<UrlExtraData> {
+    fn parsed<T: FromStr>(text: &str) -> Option<T> {
+        text.parse().ok()
+    }
+    Some(UrlExtraData(ServoArc::new(parsed(url)?)))
+}
+
 /// The base every sheet with no URL of its own is parsed against.
 ///
 /// Built by inference rather than by naming a URL library: the type is fixed by the field it goes

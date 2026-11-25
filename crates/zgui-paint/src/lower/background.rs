@@ -1,5 +1,8 @@
 //! `background-color` and `background-image`, lowered into what a fill needs.
 //!
+//! A `url()` layer is a picture: its URL and the computed values that place it on the box. The
+//! picture itself is loaded where it is drawn, by [`content::pictures`](crate::content::pictures).
+//!
 //! Only the parts that do not depend on the box are resolved here, because this is what the
 //! lowering cache holds and that cache is shared by every element with the same style. A gradient's
 //! *line* depends on the box it fills, so a gradient keeps its direction in CSS terms and its stop
@@ -10,9 +13,10 @@ use zgui_color::{Color, GradientStop, Interpolation};
 use zgui_css::parity::Support;
 use zgui_css::values::color::{AbsoluteColor, ColorValue, current, to_color, to_interpolation};
 use zgui_css::values::image::{
-    AngleOrPercentageValue, CircleValue, EllipseValue, EndingShapeValue, GradientFlags,
-    GradientItemValue, GradientValue, HorizontalPositionKeyword, ImageValue, LineDirectionValue,
-    ShapeExtent, VerticalPositionKeyword,
+    AngleOrPercentageValue, BackgroundRepeatValue, BackgroundSizeValue, CircleValue, EllipseValue,
+    EndingShapeValue, GradientFlags, GradientItemValue, GradientValue, HorizontalPositionKeyword,
+    ImageValue, LayerSize, LineDirectionValue, ShapeExtent, VerticalPositionKeyword, image_url,
+    repeats,
 };
 use zgui_css::values::length::{LengthPercentage, evaluate_at, percent};
 use zgui_css::{ComputedStyle, register_properties};
@@ -21,10 +25,10 @@ use zgui_geom::CssPx;
 register_properties! {
     background_color      => Support::Implemented("zgui-paint::lower::background"),
     background_image      => Support::Implemented("zgui-paint::lower::background"),
-    background_position_x => Support::Ignored("a background layer fills the box it is painted on"),
-    background_position_y => Support::Ignored("a background layer fills the box it is painted on"),
-    background_size       => Support::Ignored("a background layer fills the box it is painted on"),
-    background_repeat     => Support::Ignored("a background layer fills the box it is painted on"),
+    background_position_x => Support::Implemented("zgui-paint::lower::background"),
+    background_position_y => Support::Implemented("zgui-paint::lower::background"),
+    background_size       => Support::Implemented("zgui-paint::lower::background"),
+    background_repeat     => Support::Implemented("zgui-paint::lower::background"),
     background_attachment => Support::Ignored("there is no separately scrolling background layer"),
     background_clip       => Support::Ignored("a background is painted to the border box"),
     background_origin     => Support::Ignored("a background layer fills the box it is painted on"),
@@ -37,7 +41,57 @@ pub struct BackgroundStyle {
     /// The colour painted under every layer.
     pub color: Color,
     /// The gradient layers, in the order they were written: the first is painted last, on top.
+    ///
+    /// A gradient fills the whole box: `background-size`, `background-position` and
+    /// `background-repeat` place pictures only.
     pub layers: SmallVec<[GradientSpec; 1]>,
+    /// The picture layers, in the order they were written, painted over the gradients.
+    pub pictures: Vec<PictureLayer>,
+}
+
+/// One `url()` layer of `background-image` or `mask-image`, with the values that place it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureLayer {
+    /// The resolved URL of the picture.
+    pub url: std::sync::Arc<str>,
+    /// The horizontal position. A percentage is of the positioning area's width less the
+    /// picture's.
+    pub x: LengthPercentage,
+    /// The vertical position, in the same terms.
+    pub y: LengthPercentage,
+    /// How large the picture is drawn.
+    pub size: LayerSize,
+    /// Whether the picture tiles along each axis.
+    pub repeat: (bool, bool),
+}
+
+/// The picture layers of one image list, each placed by the entry of the other lists at its index.
+///
+/// The other lists repeat when they are shorter than the image list, which is how CSS pairs them.
+pub(crate) fn pictures_of(
+    images: &[ImageValue],
+    x: &[LengthPercentage],
+    y: &[LengthPercentage],
+    sizes: &[BackgroundSizeValue],
+    repeat: &[BackgroundRepeatValue],
+) -> Vec<PictureLayer> {
+    fn at<T: Clone>(list: &[T], index: usize) -> Option<T> {
+        (!list.is_empty()).then(|| list[index % list.len()].clone())
+    }
+    images
+        .iter()
+        .enumerate()
+        .filter_map(|(index, image)| {
+            Some(PictureLayer {
+                url: std::sync::Arc::from(image_url(image)?),
+                x: at(x, index).unwrap_or_else(|| percent(0.0)),
+                y: at(y, index).unwrap_or_else(|| percent(0.0)),
+                size: at(sizes, index)
+                    .map_or(LayerSize::Explicit(None, None), |size| LayerSize::of(&size)),
+                repeat: at(repeat, index).map_or((true, true), |repeat| repeats(&repeat)),
+            })
+        })
+        .collect()
 }
 
 impl Default for BackgroundStyle {
@@ -46,6 +100,7 @@ impl Default for BackgroundStyle {
         Self {
             color: Color::TRANSPARENT,
             layers: SmallVec::new(),
+            pictures: Vec::new(),
         }
     }
 }
@@ -53,7 +108,7 @@ impl Default for BackgroundStyle {
 impl BackgroundStyle {
     /// Whether this paints nothing at all.
     pub fn is_invisible(&self) -> bool {
-        self.layers.is_empty() && self.color.alpha() == 0.0
+        self.layers.is_empty() && self.pictures.is_empty() && self.color.alpha() == 0.0
     }
 }
 
@@ -188,6 +243,13 @@ pub fn of(style: &ComputedStyle) -> BackgroundStyle {
     BackgroundStyle {
         color: to_color(&background.background_color.resolve_to_absolute(current)),
         layers,
+        pictures: pictures_of(
+            &background.background_image.0,
+            &background.background_position_x.0,
+            &background.background_position_y.0,
+            &background.background_size.0,
+            &background.background_repeat.0,
+        ),
     }
 }
 
