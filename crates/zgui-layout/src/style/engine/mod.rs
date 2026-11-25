@@ -46,6 +46,14 @@ pub(crate) struct Variant {
     pub(crate) measured: MeasuredSizes,
 }
 
+/// How wide a scroll container's bars are, in device pixels: the width a style sheet gave them
+/// (`--zgui-scrollbar-width`, which `::-webkit-scrollbar` rules are carried into), else the
+/// theme's.
+fn scrollbar_width(style: &ComputedStyle, device: DeviceStyle) -> f32 {
+    zgui_css::values::custom::length(style, "zgui-scrollbar-width")
+        .map_or(device.scrollbar_width, |px| px.max(0.0) * device.scale)
+}
+
 /// The part of the engine style that follows from the cascade result and the device alone.
 pub(crate) fn template(
     style: &ComputedStyle,
@@ -113,7 +121,7 @@ pub(crate) fn template(
         },
         item_is_table: false,
         item_is_replaced: false,
-        scrollbar_width: device.scrollbar_width,
+        scrollbar_width: scrollbar_width(style, device),
         aspect_ratio: None,
         size: Size {
             width: length::size(&position.width, scale, calc),

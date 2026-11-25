@@ -9,6 +9,7 @@
 //! | [`errors`] | what the parser dropped, and where |
 //! | [`loader`] | where the source of a referenced sheet comes from |
 //! | [`ua`] | this framework's own user-agent sheet |
+//! | [`webkit_scrollbar`] | `::-webkit-scrollbar` rules carried to the scroll container they style |
 
 pub mod errors;
 pub mod loader;
@@ -17,6 +18,7 @@ pub mod parse;
 pub mod replace;
 pub mod set;
 pub mod ua;
+pub mod webkit_scrollbar;
 
 use style::shared_lock::SharedRwLock;
 use style::stylesheets::UrlExtraData;

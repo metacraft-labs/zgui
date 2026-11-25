@@ -174,7 +174,19 @@ pub fn number(style: &ComputedStyle, name: &str) -> Option<f32> {
 /// second input and a second thing to invalidate on, and a stroke width is not a place that needs
 /// one.
 pub fn length(style: &ComputedStyle, name: &str) -> Option<f32> {
-    parse_length(text(style, name)?)
+    with_name(name, |name| {
+        let properties = style.custom_properties();
+        let value = properties
+            .inherited
+            .get(name)
+            .or_else(|| properties.non_inherited.get(name))?;
+        match value.as_universal() {
+            Some(universal) => parse_length(universal.css.as_str()),
+            // A registered `<length>` (`@property`) computes to an absolute length, a
+            // font-relative one included, and is held typed rather than as text.
+            None => parse_length(&value.to_variable_value().css),
+        }
+    })
 }
 
 /// Reads one absolute length.

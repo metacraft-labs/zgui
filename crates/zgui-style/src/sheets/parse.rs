@@ -47,8 +47,9 @@ impl ParseContext<'_> {
         origin: Origin,
         media: ServoArc<Locked<MediaList>>,
     ) -> Stylesheet {
+        let css = crate::sheets::webkit_scrollbar::rewrite(css);
         Stylesheet::from_str(
-            css,
+            &css,
             self.url.clone(),
             origin,
             media,
