@@ -100,8 +100,17 @@ impl Dom for DocumentDom {
         let Some(el) = self.live_index_of(el) else {
             return;
         };
-        let stored = value.map(Into::into);
-        self.edit(|edit| edit.set_attribute(el, name, stored));
+        // `id` is not an attribute in the document: it lives in the node record, which is where
+        // matching reads it (`Document::set_id`). Stored as a plain attribute it read back but no
+        // `#id` selector ever matched it, so a sheet written for a browser lost every rule keyed on
+        // an element's identifier.
+        if name.as_str() == "id" {
+            let id = value.filter(|v| !v.is_empty()).map(Ident::new);
+            self.edit(|edit| edit.set_id(el, id));
+        } else {
+            let stored = value.map(Into::into);
+            self.edit(|edit| edit.set_attribute(el, name, stored));
+        }
         self.note_attribute(el, name, value);
     }
 

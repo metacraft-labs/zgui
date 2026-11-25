@@ -45,6 +45,13 @@ impl DocumentDom {
         }
         let document = self.document();
         let index = id::resolve(&document, node);
+        if name.as_str() == "id" {
+            // Held in the node record, where `set_attribute` puts it for matching.
+            return document
+                .node(index)
+                .attr_text("id")
+                .map(std::borrow::Cow::into_owned);
+        }
         document
             .node(index)
             .attrs()
