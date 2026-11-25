@@ -78,3 +78,14 @@ matcher rightly picks regular) was drawn thickened. Browsers synthesise bold onl
 600 or more met by a face lighter than 600; the patch does the same.
 `crates/zgui-text-parley/tests/line.rs` (`a_medium_request_on_a_regular_face_is_not_emboldened`)
 pins it.
+
+### The Nix store's top directory is not stamped (`backend/fontconfig_cache.rs`)
+
+The cache stamps the directory of every configuration file it loaded, so that a file added beside
+them invalidates it. A configuration file directly in the Nix store (`FONTCONFIG_FILE` in a Nix
+shell) made it stamp the store's top directory, whose modification time moves with every build on
+the machine: on a busy machine the stamp was younger than the settle margin at almost every scan,
+the file was refused as unsettled, and the cache was never written
+(`a_cached_collection_resolves_what_fontconfig_resolves` failed or passed by the second). A file in
+the store is immutable and nothing is ever added beside it, so the store's top directory is not
+stamped. `a_configuration_file_in_the_nix_store_does_not_stamp_the_store` pins it.

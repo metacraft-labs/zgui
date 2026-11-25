@@ -378,11 +378,17 @@ fn stamped_paths(reported: &Reported) -> Vec<Vec<u8>> {
     let home = std::env::var_os("HOME").map(OsString::into_vec);
     let mut paths = BTreeSet::new();
     paths.extend(reported.font_dirs.iter().cloned());
+    let store = nix_store_dir();
     for file in &reported.config_files {
         paths.insert(file.clone());
         if let Some(parent) = Path::new(OsStr::from_bytes(file)).parent() {
             let parent = parent.as_os_str().as_bytes().to_vec();
-            if parent.len() > 1 && Some(&parent) != home.as_ref() {
+            // A directory's stamp notices a configuration file added beside the ones it holds.
+            // The Nix store's top directory gains a path with every build on the machine, and a
+            // file directly in it is immutable and named by its hash: no configuration is ever
+            // added beside it. Stamped, its modification time moved every few seconds on a busy
+            // machine, so the file was refused as unsettled and never written.
+            if parent.len() > 1 && Some(&parent) != home.as_ref() && parent != store {
                 paths.insert(parent);
             }
         }
@@ -407,6 +413,14 @@ fn stamped_paths(reported: &Reported) -> Vec<Vec<u8>> {
         }
     }
     paths.into_iter().collect()
+}
+
+/// The Nix store's top directory: `NIX_STORE_DIR`, else `/nix/store`.
+fn nix_store_dir() -> Vec<u8> {
+    std::env::var_os("NIX_STORE_DIR")
+        .map(OsString::into_vec)
+        .filter(|dir| dir.starts_with(b"/"))
+        .unwrap_or_else(|| b"/nix/store".to_vec())
 }
 
 fn stamp_of(meta: &fs::Metadata) -> [u64; 6] {
@@ -584,6 +598,25 @@ impl<'a> Reader<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_configuration_file_in_the_nix_store_does_not_stamp_the_store() {
+        // ZGUI-PATCH: the store's top directory changes with every build on the machine, which
+        // made the cache unwritable there (see `stamped_paths`). A configuration directory that
+        // holds included files is still stamped.
+        let reported = super::Reported {
+            font_dirs: alloc::vec![b"/nix/store/abc-fonts/share/fonts".to_vec()],
+            config_files: alloc::vec![
+                b"/nix/store/abc-fonts.conf".to_vec(),
+                b"/etc/fonts/conf.d/10-hinting-slight.conf".to_vec(),
+            ],
+        };
+        let paths = super::stamped_paths(&reported);
+        assert!(!paths.contains(&super::nix_store_dir()), "{paths:?}");
+        assert!(paths.contains(&b"/nix/store/abc-fonts.conf".to_vec()));
+        assert!(paths.contains(&b"/etc/fonts/conf.d".to_vec()));
+        assert!(paths.contains(&b"/nix/store/abc-fonts/share/fonts".to_vec()));
+    }
+
     use super::*;
 
     /// A font directory that changed after the scan started is not trusted, even when the change
