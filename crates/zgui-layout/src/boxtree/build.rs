@@ -1,11 +1,14 @@
 //! Turning a styled document into a box tree.
 
 use zgui_css::ComputedStyle;
+use zgui_css::values::size::PositionValue;
 use zgui_dom::side::BoxKey;
 use zgui_dom::{Document, NodeIndex, NodeKind};
 use zgui_profile::{Counter, counter};
 
-use crate::boxtree::absolute::{Reparented, attach_all, establishes_containing_block};
+use crate::boxtree::absolute::{
+    Reparented, attach_all, establishes_containing_block, establishes_fixed_containing_block,
+};
 use crate::boxtree::anonymous::{Placed, wrap_inline_runs};
 use crate::boxtree::classify::{Classification, blockify_with, classify};
 use crate::boxtree::{order, pseudo};
@@ -121,6 +124,7 @@ pub fn build(store: &mut LayoutStore, document: &Document) -> Option<BoxKey> {
         store,
         document,
         reparented: Vec::new(),
+        fixed: None,
     };
     let placed = builder.element(root, None, None)?;
     let reparented = core::mem::take(&mut builder.reparented);
@@ -161,14 +165,30 @@ pub fn build_subtree(
     containing_block: BoxKey,
     parent_style: Option<&ComputedStyle>,
 ) -> Option<Subtree> {
+    let fixed = fixed_containing_block(store, containing_block);
     let mut builder = Builder {
         store,
         document,
         reparented: Vec::new(),
+        fixed,
     };
     let root = builder.element(index, Some(containing_block), parent_style)?;
     let reparented = core::mem::take(&mut builder.reparented);
     Some(Subtree { root, reparented })
+}
+
+/// The containing block a fixed box below `from` is positioned against: the nearest transformed or
+/// filtered box at or above `from`, else the root's box.
+fn fixed_containing_block(store: &LayoutStore, from: BoxKey) -> Option<BoxKey> {
+    let mut next = Some(from);
+    while let Some(key) = next {
+        let node = store.get(key)?;
+        if establishes_fixed_containing_block(&node.style, node.fc) {
+            return Some(key);
+        }
+        next = node.parent;
+    }
+    store.root()
 }
 
 /// The state one build carries across the whole tree.
@@ -179,6 +199,10 @@ struct Builder<'a> {
     document: &'a Document,
     /// Out-of-flow boxes and the ancestors that position them.
     reparented: Vec<Reparented>,
+    /// The containing block of a fixed box at the point the build has reached: the root's box (the
+    /// initial containing block), or the nearest transformed or filtered ancestor's. `None` until
+    /// the root's box is made, in a build of the whole tree.
+    fixed: Option<BoxKey>,
 }
 
 impl Builder<'_> {
@@ -260,6 +284,12 @@ impl Builder<'_> {
         // A box that arrives with no containing block is the root of the tree, and the root's box
         // is the initial containing block: an out-of-flow box with no positioned ancestor is laid
         // out against it rather than against the box it was written inside.
+        // The fixed containing block this box is positioned against, if it is fixed, and the one its
+        // descendants are.
+        let outer_fixed = self.fixed;
+        if containing_block.is_none() || establishes_fixed_containing_block(style, fc) {
+            self.fixed = Some(key);
+        }
         let inner_cb = if containing_block.is_none()
             || establishes_containing_block(classification.positioned, fc)
         {
@@ -289,8 +319,18 @@ impl Builder<'_> {
             );
         }
 
+        self.fixed = outer_fixed;
         self.link(key, fc, style, children);
         if let (true, Some(container)) = (classification.out_of_flow, containing_block) {
+            // A fixed box is positioned against the viewport, whose box is the initial containing
+            // block, and not against the nearest positioned ancestor an absolute box uses. Placed
+            // against that ancestor, a status bar written `position: fixed; bottom: 0` inside a
+            // `position: relative` row of no height sat above the top of the window.
+            let container = if style.get_box().position == PositionValue::Fixed {
+                outer_fixed.unwrap_or(container)
+            } else {
+                container
+            };
             self.reparented.push(Reparented {
                 key,
                 containing_block: container,

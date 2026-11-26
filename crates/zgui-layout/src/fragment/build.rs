@@ -294,7 +294,7 @@ pub(crate) fn place(
     // A `position: fixed` box is in the viewport rather than in whatever is scrolling around it,
     // so it takes none of the shift the scroll containers above it accumulated — and neither does
     // anything inside it, which is why the shift is dropped here rather than only for this box.
-    let fixed = anchored::ignores_scroll(&node.style);
+    let fixed = anchored::ignores_scroll(store, key);
     let inherited = if fixed { (0.0, 0.0) } else { from.shift };
     // For the same reason a fixed box is drawn in the coordinate system its parent's fixed
     // descendants hang from, which leaves out the content spaces of the scroll containers above.

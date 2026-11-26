@@ -11,6 +11,10 @@
 //! port, so a scroll composes it again against the moved port. A scroll frame visits both, and the
 //! path down to each, so the subtree inks above them stay true.
 //!
+//! A box outside the container that is painted over the port does not move with the content
+//! either: a fixed box laid out by the root's box, or a later sibling. A scroll that writes the
+//! content space damages it where it is and where moving the port's pixels puts its old image.
+//!
 //! A container keeps its children in its own space when it does not clip them, when it is drawn
 //! through a matrix, or when a fixed box below hangs from a transformed or sticky box below it,
 //! because the content space would move that box. A scroll of such a container changes the shift

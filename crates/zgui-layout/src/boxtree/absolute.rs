@@ -47,6 +47,24 @@ pub fn establishes_containing_block(positioned: bool, fc: FormattingContext) -> 
     positioned && fc != FormattingContext::None
 }
 
+/// Whether a box establishes the containing block of a *fixed* descendant.
+///
+/// A fixed box is positioned against the viewport, the initial containing block, unless an
+/// ancestor is transformed or filtered: such a box contains its fixed descendants, as CSS says
+/// and as a browser draws them.
+pub fn establishes_fixed_containing_block(
+    style: &zgui_css::ComputedStyle,
+    fc: FormattingContext,
+) -> bool {
+    if fc == FormattingContext::None {
+        return false;
+    }
+    let effects = style.get_effects();
+    crate::fragment::transform::is_transformed(style.get_box())
+        || !effects.filter.0.is_empty()
+        || !effects.backdrop_filter.0.is_empty()
+}
+
 /// Appends every re-parented box to the layout child list of the box that positions it.
 ///
 /// Run once, after the whole tree is built, because a box's containing block is an ancestor and an

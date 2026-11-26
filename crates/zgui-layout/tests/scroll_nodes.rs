@@ -798,8 +798,12 @@ fn a_scroll_past_a_sticky_header_visits_the_header_and_no_row() {
     );
 }
 
-/// A positioned scrollport holding a fixed box of its own and, in one positioned row, a fixed
-/// box positioned against that row.
+/// A positioned scrollport with two fixed boxes written inside it: one of its own, and one in a
+/// positioned row.
+///
+/// Neither the port nor the row is transformed or filtered, so both fixed boxes are positioned
+/// against the viewport and laid out by the root's box. They are painted over the port and do not
+/// move with its content. Each paints a background, so its whole border box marks pixels.
 fn fixed_page() -> Fixture {
     let mut rows: Vec<Element> = (0..12)
         .map(|_| Element::new("row").children(vec![Element::new("card").text("alpha bravo")]))
@@ -818,14 +822,14 @@ fn fixed_page() -> Fixture {
          held  { display: block; height: 20px; position: relative }
          card  { display: block; overflow: hidden; border-radius: 4px; height: 18px }
          fab   { display: block; position: fixed; top: 150px; left: 200px; width: 40px;
-                 height: 30px }
+                 height: 30px; background-color: #336699 }
          badge { display: block; position: fixed; top: 4px; left: 250px; width: 20px;
-                 height: 10px }",
+                 height: 10px; background-color: #993366 }",
     )
 }
 
 #[test]
-fn a_fixed_box_inside_a_content_space_stays_where_a_fresh_build_puts_it() {
+fn a_fixed_box_written_inside_a_content_space_stays_where_a_fresh_build_puts_it() {
     let _guard = exclusive();
     let (spaced, fresh, held) = two_ways(&fixed_page, &STEPS);
     assert!(
@@ -834,8 +838,9 @@ fn a_fixed_box_inside_a_content_space_stays_where_a_fresh_build_puts_it() {
     );
     agree(&spaced, &fresh);
 
-    // Both fixed boxes stay where they were drawn before any scroll, and the damage of a scroll
-    // that writes the content space holds them where they are and where moving the port's
+    // Both fixed boxes stay where they were drawn before any scroll. They are painted over the
+    // port, so the composed pixels a frame moves for the scroll hold them too: the damage of a
+    // scroll that writes the content space holds them where they are and where moving the port's
     // pixels would put them.
     let fixture = fixed_page();
     let mut store = fixture.box_tree();
@@ -843,25 +848,24 @@ fn a_fixed_box_inside_a_content_space_stays_where_a_fresh_build_puts_it() {
     let mut frame = lay_out(&mut store, &mut content, 300.0, 240.0);
     let element = port(&store);
     let port_key = port_box(&store);
+    // Written inside the positioned port, both are positioned against the viewport: CSS gives a
+    // fixed box the initial containing block unless a transformed or filtered ancestor contains
+    // it, so neither rides in the port's content space. (A fixed box contained by a transformed
+    // box inside the port is the case of `transformed_page` and `sticky_in_row_page`.)
     let fixed: Vec<zgui_layout::BoxKey> = store
         .keys()
         .into_iter()
         .filter(|&key| {
-            store
-                .fragments_of_box(key)
-                .first()
-                .and_then(|frag| store.fragment(*frag))
-                .is_some_and(|piece| piece.flags.contains(FragmentFlags::FIXED_BELOW))
-                && store.node(key).children.iter().all(|child| {
-                    store
-                        .fragments_of_box(*child)
-                        .first()
-                        .and_then(|frag| store.fragment(*frag))
-                        .is_none_or(|piece| !piece.flags.contains(FragmentFlags::FIXED_BELOW))
-                })
-                && key != port_key
+            store.node(key).style.get_box().position == zgui_css::values::size::PositionValue::Fixed
         })
         .collect();
+    for key in &fixed {
+        assert_eq!(
+            store.node(*key).parent,
+            store.root(),
+            "a fixed box is laid out by the initial containing block"
+        );
+    }
     let device = |store: &LayoutStore, frame: &Frame, key| {
         let fragment = store
             .fragment(store.fragments_of_box(key)[0])
@@ -934,6 +938,11 @@ fn a_fixed_box_inside_a_content_space_stays_where_a_fresh_build_puts_it() {
 
 /// The scrollport of [`page`] with transformed rows, and optionally a fixed box inside one of
 /// them.
+///
+/// The transformed row contains the fixed box, so the box adds to the port's scrollable overflow
+/// as an absolute box does (Chromium 147 measures the same `scrollWidth` for both). It stands
+/// clear of the port's right edge, so that the port's scrollbars are the same with it and
+/// without it.
 fn transformed_page(with_fixed: bool) -> Fixture {
     let mut rows: Vec<Element> = (0..12)
         .map(|_| Element::new("row").children(vec![Element::new("card").text("alpha bravo")]))
@@ -951,7 +960,7 @@ fn transformed_page(with_fixed: bool) -> Fixture {
          row   { display: block; height: 20px; position: relative;
                  transform: translate(3px, 1px) }
          card  { display: block; overflow: hidden; border-radius: 4px; height: 18px }
-         badge { display: block; position: fixed; top: 2px; left: 250px; width: 20px;
+         badge { display: block; position: fixed; top: 2px; left: 150px; width: 20px;
                  height: 10px }",
     )
 }
@@ -1051,9 +1060,24 @@ fn a_content_space_draws_every_row_where_a_port_kept_out_of_one_draws_it() {
     }
 }
 
-/// The scrollport of [`page`] with one row that holds a sticky box, and optionally transformed
-/// rows and a fixed box inside the sticky box.
-fn sticky_in_row_page(transformed: bool, with_fixed: bool) -> Fixture {
+/// Which boxes of [`sticky_in_row_page`] are transformed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Transformed {
+    /// None.
+    Nothing,
+    /// Every row.
+    Rows,
+    /// The sticky box.
+    Sticky,
+}
+
+/// The scrollport of [`page`] with one row that holds a sticky box, and optionally a transform on
+/// the rows or on the sticky box, and a fixed box inside the sticky box.
+///
+/// A sticky box does not contain a fixed box. Without a transform the fixed box is positioned
+/// against the viewport and is laid out by the root's box, outside the port. A transformed row or
+/// sticky box contains it, and the fixed box hangs from that box inside the port.
+fn sticky_in_row_page(transformed: Transformed, with_fixed: bool) -> Fixture {
     let mut rows: Vec<Element> = (0..12)
         .map(|_| Element::new("row").children(vec![Element::new("card").text("alpha bravo")]))
         .collect();
@@ -1062,18 +1086,19 @@ fn sticky_in_row_page(transformed: bool, with_fixed: bool) -> Fixture {
         inner.push(Element::new("badge").text("delta"));
     }
     rows[2] = Element::new("row").children(vec![Element::new("wrap").children(inner)]);
-    let transform = if transformed {
-        "transform: translate(3px, 1px)"
-    } else {
-        ""
+    let (row_transform, wrap_transform) = match transformed {
+        Transformed::Nothing => ("", ""),
+        Transformed::Rows => ("transform: translate(3px, 1px)", ""),
+        Transformed::Sticky => ("", "transform: translate(3px, 1px)"),
     };
     Fixture::new(
         Element::new("root").children(vec![Element::new("port").children(rows)]),
         &format!(
             "root  {{ display: block; width: 300px; height: 240px }}
              port  {{ display: block; height: 200px; overflow: scroll; margin-top: 20px }}
-             row   {{ display: block; height: 20px; position: relative; {transform} }}
-             wrap  {{ display: block; height: 10px; position: sticky; top: 0px }}
+             row   {{ display: block; height: 20px; position: relative; {row_transform} }}
+             wrap  {{ display: block; height: 10px; position: sticky; top: 0px;
+                     {wrap_transform} }}
              card  {{ display: block; overflow: hidden; border-radius: 4px; height: 8px }}
              badge {{ display: block; position: fixed; top: 2px; left: 250px; width: 20px;
                      height: 10px }}"
@@ -1085,7 +1110,7 @@ fn sticky_in_row_page(transformed: bool, with_fixed: bool) -> Fixture {
 fn a_sticky_box_in_a_transformed_row_takes_a_content_space_and_is_drawn_where_a_fresh_build_puts_it()
  {
     let _guard = exclusive();
-    let (spaced, fresh, held) = two_ways(&|| sticky_in_row_page(true, false), &STEPS);
+    let (spaced, fresh, held) = two_ways(&|| sticky_in_row_page(Transformed::Rows, false), &STEPS);
     assert!(
         held.iter().all(|held| *held),
         "the port gave its content space up over a sticky box in a transformed row: {held:?}"
@@ -1096,14 +1121,84 @@ fn a_sticky_box_in_a_transformed_row_takes_a_content_space_and_is_drawn_where_a_
 #[test]
 fn a_fixed_box_in_a_sticky_box_keeps_the_port_out_of_a_content_space() {
     let _guard = exclusive();
-    for transformed in [false, true] {
+    // A transformed row or a transformed sticky box contains the fixed box, which then hangs
+    // from it inside the port. Without a transform the fixed box is the viewport's: see
+    // `a_fixed_box_written_in_a_sticky_box_leaves_the_port_its_content_space`.
+    for transformed in [Transformed::Rows, Transformed::Sticky] {
         let (spaced, fresh, held) = two_ways(&|| sticky_in_row_page(transformed, true), &STEPS);
         assert!(
             held.iter().all(|held| !held),
-            "transformed rows {transformed}: the port took a content space that would carry the \
+            "transformed {transformed:?}: the port took a content space that would carry the \
              sticky box's fixed box: {held:?}"
         );
         agree(&spaced, &fresh);
+    }
+}
+
+#[test]
+fn a_fixed_box_written_in_a_sticky_box_leaves_the_port_its_content_space() {
+    let _guard = exclusive();
+    // Nothing between the fixed box and the root is transformed or filtered, and a sticky box
+    // contains no fixed box. So the fixed box is the viewport's, laid out by the root's box and
+    // painted over the port, and the port keeps its content space.
+    let store = sticky_in_row_page(Transformed::Nothing, true).box_tree();
+    let badge = store
+        .keys()
+        .into_iter()
+        .find(|&key| {
+            store.node(key).style.get_box().position == zgui_css::values::size::PositionValue::Fixed
+        })
+        .expect("the page has a fixed box");
+    assert_eq!(store.node(badge).parent, store.root());
+    let (spaced, fresh, held) =
+        two_ways(&|| sticky_in_row_page(Transformed::Nothing, true), &STEPS);
+    assert!(
+        held.iter().all(|held| *held),
+        "the port gave its content space up over a fixed box outside it: {held:?}"
+    );
+    agree(&spaced, &fresh);
+}
+
+/// The scrollport of [`page`] with one filtered, positioned row holding a box positioned
+/// `position`.
+fn filtered_row_page(position: &str) -> Fixture {
+    let mut rows: Vec<Element> = (0..12)
+        .map(|_| Element::new("row").children(vec![Element::new("card").text("alpha bravo")]))
+        .collect();
+    rows[2] = Element::new("tinted").children(vec![
+        Element::new("card").text("alpha bravo"),
+        Element::new("badge").text("delta"),
+    ]);
+    Fixture::new(
+        Element::new("root").children(vec![Element::new("port").children(rows)]),
+        &format!(
+            "root   {{ display: block; width: 300px; height: 240px }}
+             port   {{ display: block; height: 200px; overflow: scroll; margin-top: 20px }}
+             row    {{ display: block; height: 20px }}
+             tinted {{ display: block; height: 20px; position: relative;
+                      filter: grayscale(1) }}
+             card   {{ display: block; overflow: hidden; border-radius: 4px; height: 18px }}
+             badge  {{ display: block; position: {position}; top: 2px; left: 250px; width: 20px;
+                      height: 10px }}"
+        ),
+    )
+}
+
+#[test]
+fn a_fixed_box_in_a_filtered_row_scrolls_where_an_absolute_box_does() {
+    let _guard = exclusive();
+    // A filtered box contains a fixed box as a positioned box contains an absolute one, and it has
+    // no coordinate system of its own. So the fixed box takes the scroll of the port around the
+    // row, and is drawn where an absolute box in its place is drawn.
+    let (fixed, fixed_fresh, _) = two_ways(&|| filtered_row_page("fixed"), &STEPS);
+    let (absolute, _, _) = two_ways(&|| filtered_row_page("absolute"), &STEPS);
+    agree(&fixed, &fixed_fresh);
+    for (step, (fixed, absolute)) in fixed.iter().zip(&absolute).enumerate() {
+        assert_eq!(
+            fixed, absolute,
+            "after scroll {step}, the fixed box in the filtered row is drawn somewhere an \
+             absolute box is not"
+        );
     }
 }
 
@@ -1292,10 +1387,12 @@ fn a_line_that_goes_as_its_port_scrolls_is_damaged_on_the_drawn_frame() {
 #[test]
 fn a_port_kept_out_of_a_content_space_damages_every_row_it_carries_where_it_was_and_where_it_is() {
     let _guard = exclusive();
-    // A fixed box in a sticky box keeps the port out of a content space, so a scroll changes the
-    // shift the rows are composed against. The rows are carried as layout moves: the frame cannot
-    // move the port's pixels, so each row is damaged where it was and where it is.
-    let fixture = sticky_in_row_page(false, true);
+    // A fixed box in a transformed sticky box keeps the port out of a content space, so a scroll
+    // changes the shift the rows are composed against. The rows are carried as layout moves: the
+    // frame cannot move the port's pixels, so each row is damaged where it was and where it is.
+    // The transform goes on the sticky box: a sticky box alone contains no fixed box, and
+    // transformed rows are drawn through a matrix and composed again rather than carried.
+    let fixture = sticky_in_row_page(Transformed::Sticky, true);
     let mut store = fixture.box_tree();
     let mut content = measurer();
     let mut frame = lay_out(&mut store, &mut content, 300.0, 240.0);
@@ -1379,5 +1476,84 @@ fn a_port_kept_out_of_a_content_space_damages_every_row_it_carries_where_it_was_
             shifted >= 10,
             "{shifted} boxes were carried; the scroll should have carried the plain rows"
         );
+    }
+}
+
+/// The scrollport of [`page`], and a status bar after it that is painted over the port's bottom
+/// edge, the way a `position: fixed; bottom: 0` bar sits over an editor.
+fn page_under_a_bar(position: &str) -> Fixture {
+    let rows: Vec<Element> = (0..12)
+        .map(|_| {
+            Element::new("row").children(vec![Element::new("card").text("alpha bravo delta gamma")])
+        })
+        .collect();
+    Fixture::new(
+        Element::new("root").children(vec![
+            Element::new("port").children(rows),
+            Element::new("bar").text("delta"),
+        ]),
+        &format!(
+            "root {{ display: block; width: 300px; height: 240px }}
+             port {{ display: block; height: 200px; overflow: scroll; margin-top: 20px }}
+             row  {{ display: block; height: 20px }}
+             card {{ display: block; overflow: hidden; border-radius: 4px; height: 18px }}
+             bar  {{ display: block; position: {position}; bottom: 0px; left: 0px; width: 300px;
+                    height: 32px; background-color: #202020 }}"
+        ),
+    )
+}
+
+#[test]
+fn a_scroll_damages_a_box_painted_over_the_port_where_it_is_and_where_the_moved_pixels_put_it() {
+    let _guard = exclusive();
+    // A frame may answer a scroll by moving the port's composed pixels, and those pixels hold
+    // whatever is painted over the port. The bar does not move with the content: it owes where it
+    // is, because the moved pixels under it are the port's, and where the move carries its old
+    // image. Only the part inside the port changes, so only that part is asked for.
+    for position in ["fixed", "absolute"] {
+        let fixture = page_under_a_bar(position);
+        let mut store = fixture.box_tree();
+        let mut content = measurer();
+        let mut frame = lay_out(&mut store, &mut content, 300.0, 240.0);
+        let element = port(&store);
+        let port_key = port_box(&store);
+        let root = store.root().expect("a root box");
+        let bar = *store.node(root).children.last().expect("the bar");
+        assert_ne!(bar, port_key);
+        let mut last = 0.0;
+        for by in [10.0, 37.0, 30.0] {
+            frame
+                .scroll
+                .place(element, Point::new(DevicePx(0.0), DevicePx(by)));
+            let moves = compose(&mut frame, &mut store, &mut Scrolled { node: element });
+            assert!(scrolls_content(&store, port_key));
+            assert_eq!(moves.by, Some((0.0, last - by)), "the scroll is one move");
+            let placements = Placements::of(&frame.spatial);
+            let piece = store
+                .fragment(store.fragments_of_box(port_key)[0])
+                .expect("a port piece");
+            let port_rect = onto_device(piece.padding_box(), piece.transform, &placements);
+            let now = store
+                .fragment(store.fragments_of_box(bar)[0])
+                .expect("a bar piece")
+                .device_subtree_ink(&placements);
+            let carried = now.translate(zgui_geom::Size::new(DevicePx(0.0), DevicePx(last - by)));
+            let mut checked = 0;
+            for rect in [now, carried] {
+                let Some(rect) = rect.intersection(port_rect) else {
+                    continue;
+                };
+                let pixels = zgui_layout::fragment::diff::pixels(rect);
+                assert!(
+                    covered(&[&moves.beyond], pixels),
+                    "{position} bar, scrolled to {by}: the damage beyond the move {:?} leaves \
+                     {pixels:?} out",
+                    moves.beyond.rects()
+                );
+                checked += 1;
+            }
+            assert_eq!(checked, 2, "the bar is painted over the port");
+            last = by;
+        }
     }
 }

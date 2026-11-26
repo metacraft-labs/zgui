@@ -862,7 +862,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
             placed.descent = placed.content_descent(content.id);
             leading = own.difference(Dirty::SCROLL);
             if space_stable && let Some(by) = content.moved {
-                self.scroll_content(&placed, previous, by);
+                self.scroll_content(key, &placed, previous, by);
                 content_moved = Some(by);
             }
         }
@@ -1361,7 +1361,13 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
     /// so nothing else is damaged on their behalf. A child born or changed in the same frame is
     /// composed and damages what it draws. The hit index is told that what is under a point
     /// changed, because no entry did.
-    fn scroll_content(&mut self, placed: &Placed, previous: Option<Held>, by: (f32, f32)) {
+    fn scroll_content(
+        &mut self,
+        key: BoxKey,
+        placed: &Placed,
+        previous: Option<Held>,
+        by: (f32, f32),
+    ) {
         self.moves.moved(by);
         if let Some(held) = previous {
             absorb(
@@ -1372,8 +1378,80 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         let port = self.device_now(placed.padding_box, placed.anchor);
         if let Some(port) = self.admitted(placed.descent.clip).cut(port) {
             absorb(self.damage, port);
+            self.damage_drawn_over(key, port, by);
         }
         self.hit.note_space_moved();
+    }
+
+    /// Damages, beyond the move, every box outside `key` that is painted over its port `port`.
+    ///
+    /// The frame may answer the move by moving the port's composed pixels, and those pixels hold
+    /// what was painted over the port too: a fixed status bar, a dialog. Such a box does not move
+    /// with the content. So it owes where the moved pixels put its old image, and where it is.
+    /// Both are cut to the port, because the move changes no pixel outside it.
+    ///
+    /// Read off the pieces of the last composition. The walk reaches a box painted after the port
+    /// only after the port, so these are the pieces of the drawn frame. A box that changes in this
+    /// frame also damages its old and new places when the walk reaches it.
+    ///
+    /// The walk goes up from the port to the root, and at each level enters only the children
+    /// painted after the one that leads down to the port. A subtree whose folded ink misses the
+    /// port is not entered, and only a piece that marks pixels is damaged: a layout wrapper as
+    /// large as the window inks all of it and draws nothing.
+    fn damage_drawn_over(&mut self, key: BoxKey, port: Rect<DevicePx, Device>, by: (f32, f32)) {
+        let mut over: smallvec::SmallVec<[Rect<DevicePx, Device>; 4]> = smallvec::SmallVec::new();
+        let mut inside = key;
+        while let Some(parent) = self.store.get(inside).and_then(|node| node.parent) {
+            let order = crate::fragment::stacking::children_in_paint_order(self.store, parent);
+            if let Some(at) = order.iter().position(|&child| child == inside) {
+                for &later in &order[at + 1..] {
+                    self.pieces_over(later, port, &mut over);
+                }
+            }
+            inside = parent;
+        }
+        for was in over {
+            let carried = was.translate(Size::new(DevicePx(by.0), DevicePx(by.1)));
+            for rect in [was, carried] {
+                if let Some(rect) = rect.intersection(port) {
+                    absorb(&mut self.moves.beyond, rect);
+                    absorb(self.damage, rect);
+                }
+            }
+        }
+    }
+
+    /// Collects into `over` the device ink of every piece at or below `key` that marks pixels in
+    /// `port`, as the drawn frame placed it.
+    fn pieces_over(
+        &self,
+        key: BoxKey,
+        port: Rect<DevicePx, Device>,
+        over: &mut smallvec::SmallVec<[Rect<DevicePx, Device>; 4]>,
+    ) {
+        let pieces = self.store.fragments_of_box(key);
+        let Some(first) = pieces.first().and_then(|frag| self.store.fragment(*frag)) else {
+            return;
+        };
+        let folded = self.device_before(first.subtree_ink, first.anchor);
+        if folded.intersection(port).is_none() {
+            return;
+        }
+        for frag in pieces {
+            let Some(piece) = self.store.fragment(*frag) else {
+                continue;
+            };
+            if paints_nothing_itself(piece.kind, piece.flags) {
+                continue;
+            }
+            let ink = self.device_before(piece.ink, piece.anchor);
+            if ink.intersection(port).is_some() {
+                over.push(ink);
+            }
+        }
+        for &child in &self.store.node(key).children {
+            self.pieces_over(child, port, over);
+        }
     }
 
     /// The first order key `sibling`'s subtree indexes, or `None` when it indexes nothing.

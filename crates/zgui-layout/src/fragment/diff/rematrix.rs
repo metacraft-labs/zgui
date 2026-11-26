@@ -87,7 +87,7 @@ impl<D: FrameDirty> Pass<'_, '_, D> {
         // A fixed box folds FIXED_BELOW onto its own piece, so the style is read only on the path
         // down to one.
         let is_fixed = flags.is_none_or(|flags| flags.contains(FragmentFlags::FIXED_BELOW))
-            && crate::fragment::anchored::ignores_scroll(&self.store.node(key).style);
+            && crate::fragment::anchored::ignores_scroll(self.store, key);
         let outer = if is_fixed { fixed } else { outer };
         // The same matrix the composing walk arrives at: the box's own transform, or the one an
         // animation is drawing it under, composed onto the matrix above it.

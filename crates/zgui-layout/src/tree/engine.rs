@@ -201,11 +201,24 @@ impl<C: MeasureContent> EngineTree for LayoutTree<'_, C> {
         cephal::compute::oof::OOF_ALL
     }
 
-    /// A fixed box's parent only stands in for the viewport, which is its containing block; it
-    /// scrolls with nothing, so it adds nothing to the parent's scrollable overflow.
+    /// A fixed box under the root's box is positioned against the viewport; it scrolls with
+    /// nothing, so it adds nothing to the root's scrollable overflow. A transformed or filtered box
+    /// that contains a fixed box contains it as a positioned box contains an absolute one, so there
+    /// it adds to the overflow as an absolute box does.
     #[inline]
-    fn out_of_flow_overflow(&self, _node: NodeId) -> u8 {
-        cephal::compute::oof::OOF_ABSOLUTE
+    fn out_of_flow_overflow(&self, node: NodeId) -> u8 {
+        let structure = self.structure();
+        let box_node = structure.node(from_node_id(node));
+        if box_node.parent.is_some()
+            && crate::boxtree::absolute::establishes_fixed_containing_block(
+                &box_node.style,
+                box_node.fc,
+            )
+        {
+            cephal::compute::oof::OOF_ALL
+        } else {
+            cephal::compute::oof::OOF_ABSOLUTE
+        }
     }
 
     fn compute_child_layout(
