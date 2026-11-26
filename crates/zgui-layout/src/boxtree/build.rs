@@ -2,6 +2,7 @@
 
 use zgui_css::ComputedStyle;
 use zgui_css::values::size::PositionValue;
+use zgui_dom::host::ReplacedId;
 use zgui_dom::side::BoxKey;
 use zgui_dom::{Document, NodeIndex, NodeKind};
 use zgui_profile::{Counter, counter};
@@ -243,6 +244,19 @@ impl Builder<'_> {
         // `display: block` is a block-level replaced box, not a block container.
         let replaced = self.document.node(index).replaced_id();
         let intrinsic = replaced.and_then(|_| self.document.intrinsic_of(index));
+        // A vector element carrying an SVG document is replaced content too, sized from its
+        // document's root the way a browser sizes an inline `<svg>`. Its natural sizing is the
+        // document's own, read here, rather than an answer from the installed source: nothing
+        // outside the document is involved. It still paints as a drawing.
+        let (replaced, intrinsic, document_sized) = match (replaced, intrinsic) {
+            (Some(id), intrinsic) => (Some(id), intrinsic, false),
+            (None, _) => {
+                match zgui_dom::side::drawing::document_intrinsic(self.document.store(), source) {
+                    Some(natural) => (Some(ReplacedId::new(source)), Some(natural), true),
+                    None => (None, None, false),
+                }
+            }
+        };
         // Custom wins over replaced and over `display`: a registered implementation owns the
         // box's sizing outright, and everything else about the element stays ordinary.
         let custom = zgui_dom::side::custom::reference(self.document.store(), source);
@@ -259,8 +273,13 @@ impl Builder<'_> {
             self.document.store(),
             self.document.store().key_of(index),
         );
+        // A source that reports only a size has the ratio that size implies. A document reports
+        // its ratio itself, and a size filled in from the default object size implies none.
         let natural_ratio = intrinsic.and_then(|intrinsic| {
             intrinsic.ratio.or_else(|| {
+                if document_sized {
+                    return None;
+                }
                 intrinsic
                     .size
                     .filter(|size| size.height.0 != 0.0)

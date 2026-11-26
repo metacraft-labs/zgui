@@ -49,6 +49,19 @@ fn text<'a>(store: &'a DocumentStore, node: NodeKey, name: &str) -> Option<&'a S
     }
 }
 
+/// The natural size and ratio of the vector document `node` draws, when it draws an SVG document.
+///
+/// This is what makes a `vector` carrying a document a replaced box, sized the way a browser sizes
+/// an inline `<svg>`; see [`natural_sizing`](crate::side::natural::natural_sizing). Nothing for an
+/// element drawing outlines or a canvas, which keep the box their style gives them, and nothing
+/// for a document whose root is not `<svg>`.
+pub fn document_intrinsic(
+    store: &DocumentStore,
+    node: NodeKey,
+) -> Option<crate::host::replaced::Intrinsic> {
+    crate::side::natural::natural_sizing(document(store, node)?)
+}
+
 /// The space `node`'s outlines are written in, as minimum x, minimum y, width and height.
 ///
 /// Nothing for an element drawing in its own box's coordinates, and nothing for one whose view box

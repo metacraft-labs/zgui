@@ -107,7 +107,9 @@ impl Edit<'_> {
         let mut owed = Dirty::A11Y;
         if paints && before != after {
             owed |= Dirty::REPAINT;
-            if drew != crate::side::drawing::draws(store, slot) {
+            if drew != crate::side::drawing::draws(store, slot)
+                || natural_sizing_moved(key, before.as_ref(), after.as_ref())
+            {
                 owed |= Dirty::REBUILD_BOX | Dirty::RELAYOUT;
             }
         }
@@ -130,6 +132,27 @@ impl Edit<'_> {
         }
         ancestors::mark(store, node, owed);
     }
+}
+
+/// Whether a write of property `key` from `before` to `after` changed the natural size or ratio of
+/// the vector document it carries.
+///
+/// A document's root `width`, `height` and `viewBox` decide the size of the element's box, and
+/// the box captured them when it was built, so a change to them rebuilds it. A change anywhere
+/// else in the document only repaints.
+fn natural_sizing_moved(
+    key: PropKey,
+    before: Option<&PropValue>,
+    after: Option<&PropValue>,
+) -> bool {
+    if key.as_str() != zgui_vocab::prop::drawing::DOCUMENT {
+        return false;
+    }
+    let sizing = |value: Option<&PropValue>| match value {
+        Some(PropValue::Text(text)) => crate::side::natural::natural_sizing(text.as_str()),
+        _ => None,
+    };
+    sizing(before) != sizing(after)
 }
 
 #[cfg(test)]
@@ -235,6 +258,61 @@ mod tests {
             !owed.contains(Dirty::REBUILD_BOX),
             "an element that drew and still draws must not replace every box in the document"
         );
+    }
+
+    /// A document's root `width`, `height` and `viewBox` size the element's box, which captured
+    /// them when it was built; a change to them owes a new box. Redrawing the inside of a document
+    /// whose root is unchanged moves no box, and only repaints.
+    #[test]
+    fn a_document_whose_natural_size_changes_owes_a_new_box() {
+        use zgui_vocab::prop::drawing;
+
+        let mut document = Document::new();
+        let root = document.append(
+            document.document_index(),
+            NodeKind::Element,
+            ElementName::new("vector"),
+        );
+        let set = |document: &mut Document, source: &str| {
+            document
+                .edit(&EverythingMatters, |edit| {
+                    edit.set_property(
+                        root,
+                        zgui_vocab::PropKey::new(drawing::DOCUMENT),
+                        Some(zgui_vocab::PropValue::from(source)),
+                    );
+                })
+                .expect("not poisoned");
+            let owed = document.store().core(root).dirty().own();
+            document.store().core(root).dirty().clear_own(Dirty::all());
+            owed
+        };
+        set(
+            &mut document,
+            r#"<svg viewBox="0 0 16 16"><path d="M0 0h16"/></svg>"#,
+        );
+
+        let owed = set(
+            &mut document,
+            r#"<svg viewBox="0 0 16 16"><path d="M0 0h8"/></svg>"#,
+        );
+        assert!(owed.contains(Dirty::REPAINT));
+        assert!(
+            !owed.contains(Dirty::REBUILD_BOX),
+            "the same root sizes the same box"
+        );
+
+        let owed = set(
+            &mut document,
+            r#"<svg viewBox="0 0 18 17"><path d="M0 0h8"/></svg>"#,
+        );
+        assert!(owed.contains(Dirty::REBUILD_BOX | Dirty::RELAYOUT | Dirty::REPAINT));
+
+        let owed = set(
+            &mut document,
+            r#"<svg width="24" height="10" viewBox="0 0 18 17"/>"#,
+        );
+        assert!(owed.contains(Dirty::REBUILD_BOX | Dirty::RELAYOUT));
     }
 
     /// A custom element rebuilt in place gets a new implementation token. The box captured the old
