@@ -20,6 +20,7 @@ use core::ops::Range;
 use zgui_text::{BrokenParagraph, InlineBoxGeometry, InlineBoxPlacement, StrutMetrics, StyledRun};
 
 use crate::inline::strut::{Extents, RunExtents};
+use crate::inline::vertical_align::Alignment;
 
 /// One line of an inline formatting context, in the units layout works in.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,13 +63,22 @@ impl LineBox {
 /// Computes every line box of a broken paragraph, and stacks them.
 ///
 /// `runs` and `run_extents` are parallel; `boxes` is the geometry every atomic inline was broken
-/// with and `placements` says which line each of them landed on.
+/// with and `placements` says which line each of them landed on. `alignments` is parallel to
+/// `boxes`; a box missing from it is aligned to the baseline.
+///
+/// A box aligned with `top` or `bottom` takes no part in the extents the rest of the line gives
+/// it: CSS 2.1 §10.8 aligns everything else first and then places those boxes so that the line
+/// box is as short as it can be. The line grows only when such a box is taller than everything
+/// else together, and then away from the edge it is aligned to. Counting the box where it stood
+/// before it was moved to the edge made a line of two 24-tall `top`-aligned inline blocks under a
+/// 24-tall strut 31.2 tall, where Chromium 141 makes it 24.
 pub fn compute(
     broken: &BrokenParagraph,
     runs: &[StyledRun],
     run_extents: &[RunExtents],
     strut: &StrutMetrics,
     boxes: &[InlineBoxGeometry],
+    alignments: &[Alignment],
     placements: &[InlineBoxPlacement],
 ) -> Vec<LineBox> {
     let mut out = Vec::with_capacity(broken.geometry.lines.len());
@@ -82,14 +92,35 @@ pub fn compute(
                 content = content.union(run_extent.content);
             }
         }
+        let mut to_edges = false;
         for placement in placements.iter().filter(|placed| placed.line == index) {
-            let Some(geometry) = boxes.iter().find(|box_| box_.id == placement.id) else {
+            let Some(at) = boxes.iter().position(|box_| box_.id == placement.id) else {
                 continue;
             };
+            if alignments.get(at).is_some_and(|alignment| alignment.needs_line_box()) {
+                to_edges = true;
+                continue;
+            }
+            let geometry = &boxes[at];
             extents = extents.union(Extents {
                 above: geometry.shaper_height().0,
                 below: geometry.below_baseline().0,
             });
+        }
+        if to_edges {
+            for placement in placements.iter().filter(|placed| placed.line == index) {
+                let Some(at) = boxes.iter().position(|box_| box_.id == placement.id) else {
+                    continue;
+                };
+                let height = boxes[at].height.0;
+                match alignments.get(at) {
+                    Some(Alignment::Top) => extents.below = extents.below.max(height - extents.above),
+                    Some(Alignment::Bottom) => {
+                        extents.above = extents.above.max(height - extents.below);
+                    }
+                    _ => {}
+                }
+            }
         }
         out.push(LineBox {
             text: line.text.clone(),
@@ -199,7 +230,7 @@ mod tests {
 
     #[test]
     fn the_lines_are_stacked_from_our_own_extents_and_not_from_the_shapers() {
-        let lines = compute(&broken(), &[], &[], &strut(), &[], &[]);
+        let lines = compute(&broken(), &[], &[], &strut(), &[], &[], &[]);
         assert_eq!(lines.len(), 2);
         // The shaper said ten pixels a line; CSS says sixteen, because the strut's descent is part
         // of the line box and the shaper's number left it out.
@@ -232,7 +263,7 @@ mod tests {
                 below: 6.0,
             },
         }];
-        let lines = compute(&broken(), &runs, &extents, &strut(), &[], &[]);
+        let lines = compute(&broken(), &runs, &extents, &strut(), &[], &[], &[]);
         assert_eq!(
             lines[0].height(),
             16.0,
@@ -269,7 +300,7 @@ mod tests {
             line_height: CssPx(10.0),
             ..strut()
         };
-        let lines = compute(&broken(), &runs, &extents, &tight, &[], &[]);
+        let lines = compute(&broken(), &runs, &extents, &tight, &[], &[], &[]);
         assert_eq!(lines[0].height(), 10.0);
         assert_eq!(
             lines[0].ink,

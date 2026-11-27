@@ -42,7 +42,7 @@ euclid = "0.22.14"
 # the three algorithms the box tree dispatches to; the workspace drives its own layout pool through
 # the engine's batching seam.
 # Metacraft's fork of the layout engine, developed with this one; see its AGENTS.md.
-cephal = { git = "https://github.com/metacraft-labs/cephal", rev = "6eb1cad5e33b5c1559c38b219447b2f8021756be", version = "0.2.0", default-features = false, features = [
+cephal = { git = "https://github.com/metacraft-labs/cephal", rev = "05b9675f75bf43f6d91bddd13409fa59ee4a23d0", version = "0.2.0", default-features = false, features = [
     "block",
     "flex",
     "grid",

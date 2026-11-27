@@ -7,6 +7,7 @@ pub mod gate;
 pub(crate) mod marker;
 pub mod parallel;
 pub mod print;
+pub(crate) mod static_position;
 pub mod store;
 pub(crate) mod view;
 

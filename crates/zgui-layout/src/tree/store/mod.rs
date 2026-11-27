@@ -558,6 +558,7 @@ impl LayoutStore {
                 replaced: &self.replaced,
                 root: self.root,
                 variant_bases: &self.variant_bases,
+                declared: &self.declared,
             },
         )
     }
@@ -572,6 +573,7 @@ impl LayoutStore {
             replaced: &self.replaced,
             root: self.root,
             variant_bases: &self.variant_bases,
+            declared: &self.declared,
         }
     }
 
@@ -798,9 +800,16 @@ pub(crate) struct Structure<'a> {
     root: Option<BoxKey>,
     /// The key each copy of a shared paragraph copies.
     variant_bases: &'a FxHashMap<zgui_text::ParagraphKey, zgui_text::ParagraphKey>,
+    /// Where each out-of-flow box was written.
+    declared: &'a PagedVec<BoxKey, Option<Declared>, 64>,
 }
 
 impl<'a> Structure<'a> {
+    /// Where an out-of-flow box was written, or `None` for a box that was not re-parented.
+    pub(crate) fn declared(&self, key: BoxKey) -> Option<Declared> {
+        self.declared.get(key).copied().flatten()
+    }
+
     /// The key of the paragraph that `key` is a copy of, if it is a copy.
     pub(crate) fn variant_base(
         &self,

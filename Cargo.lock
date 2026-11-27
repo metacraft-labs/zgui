@@ -692,7 +692,7 @@ dependencies = [
 [[package]]
 name = "cephal"
 version = "0.2.0"
-source = "git+https://github.com/metacraft-labs/cephal?rev=6eb1cad5e33b5c1559c38b219447b2f8021756be#6eb1cad5e33b5c1559c38b219447b2f8021756be"
+source = "git+https://github.com/metacraft-labs/cephal?rev=05b9675f75bf43f6d91bddd13409fa59ee4a23d0#05b9675f75bf43f6d91bddd13409fa59ee4a23d0"
 
 [[package]]
 name = "cexpr"

@@ -201,6 +201,22 @@ impl<C: MeasureContent> EngineTree for LayoutTree<'_, C> {
         cephal::compute::oof::OOF_ALL
     }
 
+    /// Where an out-of-flow box was written decides its static position, and the containing block
+    /// holding it as a child does not know that; see [`crate::tree::static_position`].
+    fn static_position(
+        &self,
+        cb: NodeId,
+        node: NodeId,
+        recorded: cephal::geometry::Point<cephal::compute::oof::AxisStaticPosition>,
+    ) -> cephal::geometry::Point<cephal::compute::oof::AxisStaticPosition> {
+        crate::tree::static_position::static_position(
+            self,
+            from_node_id(cb),
+            from_node_id(node),
+            recorded,
+        )
+    }
+
     /// A fixed box under the root's box is positioned against the viewport; it scrolls with
     /// nothing, so it adds nothing to the root's scrollable overflow. A transformed or filtered box
     /// that contains a fixed box contains it as a positioned box contains an absolute one, so there

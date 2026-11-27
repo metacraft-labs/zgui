@@ -295,6 +295,7 @@ pub(crate) fn compute<C: MeasureContent>(
             &run_extents,
             &root_strut,
             &boxes.geometry,
+            &boxes.alignments,
             &broken.boxes,
         );
         let measured = Measured {
@@ -352,6 +353,7 @@ pub(crate) fn compute<C: MeasureContent>(
             &run_extents,
             &root_strut,
             &boxes.geometry,
+            &boxes.alignments,
             &broken.boxes,
         );
         passes += 1;
