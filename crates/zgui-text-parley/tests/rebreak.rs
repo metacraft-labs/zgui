@@ -90,6 +90,8 @@ struct BoxSpec {
     shift: f32,
     /// An edge of a nested inline box rather than an atomic inline: no break either side of it.
     glued: bool,
+    /// For an edge, whether it is the start edge.
+    opens: bool,
 }
 
 /// One request of the sequence.
@@ -156,13 +158,15 @@ fn box_spec() -> impl Strategy<Value = BoxSpec> {
         prop::sample::select(vec![0.0f32, 12.0, 20.0]),
         prop::sample::select(vec![0.0f32, 3.0, -2.5]),
         prop::bool::weighted(0.5),
+        prop::bool::weighted(0.5),
     )
-        .prop_map(|(at, width, height, shift, glued)| BoxSpec {
+        .prop_map(|(at, width, height, shift, glued, opens)| BoxSpec {
             at,
             width,
             height,
             shift,
             glued,
+            opens,
         })
 }
 
@@ -320,6 +324,7 @@ impl Built {
                 ascent: CssPx(spec.height),
                 shift: CssPx(spec.shift),
                 glued: spec.glued,
+                opens: spec.opens,
             })
             .collect();
         boxes.sort_by_key(|inline_box| inline_box.offset);
@@ -567,6 +572,7 @@ fn a_small_width_step_keeps_the_lines_of_the_step_before() {
             height: 0.0,
             shift: 0.0,
             glued: false,
+            opens: false,
         }],
         align: TextAlign::Start,
         rtl: false,
@@ -823,6 +829,7 @@ fn a_small_width_step_skips_the_engines_breaker() {
         height: 12.0,
         shift: 0.0,
         glued: false,
+        opens: false,
     }];
     // Each width moves a line, so each pass breaks.
     let jumps = prose([300.0, 150.0, 300.0].map(at).to_vec(), TextAlign::Start);

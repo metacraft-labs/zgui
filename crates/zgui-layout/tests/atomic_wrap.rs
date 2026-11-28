@@ -22,9 +22,9 @@
 //! | `ab<span style="padding-left: 4px">wordwordword</span>` | block 24 tall |
 //!
 //! The shaper behind these tests advances 8px a character, so a space is 8px rather than
-//! Chromium's 4.45px, and it starts a line it broke at a space with that space. So the x of a box
-//! after a space, and of a box on a line that starts with one, are the shaper's; every line, every
-//! height and every x the space does not move is Chromium's. No mocks: a real document, cascade,
+//! Chromium's 4.45px, and the x of a box after a space on its line is the shaper's. A space at the
+//! end of a line hangs there (CSS Text 3 §4.1.2), so a wrapped line starts at x 0 as in Chromium;
+//! every line, every height and every x the space does not move is Chromium's. No mocks: a real document, cascade,
 //! box tree and layout over the deterministic shaper.
 
 mod support;
@@ -105,7 +105,7 @@ fn inline_blocks_separated_by_spaces_wrap_at_a_space() {
         (32.0, 0.0),
         "after one 8px space"
     );
-    assert_eq!(at(&store, &fixture, "three").1, 24.0);
+    assert_eq!(at(&store, &fixture, "three"), (0.0, 24.0));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn an_inline_block_after_a_word_wraps_below_it() {
         "",
     );
     assert_eq!(height(&store, &fixture), 48.0);
-    assert_eq!(at(&store, &fixture, "one").1, 24.0);
+    assert_eq!(at(&store, &fixture, "one"), (0.0, 24.0));
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn an_inline_block_wider_than_the_line_overflows_on_a_line_of_its_own() {
     assert_eq!(height(&store, &fixture), 72.0);
     assert_eq!(at(&store, &fixture, "one"), (0.0, 0.0));
     assert_eq!(at(&store, &fixture, "two"), (0.0, 24.0));
-    assert_eq!(at(&store, &fixture, "three").1, 48.0);
+    assert_eq!(at(&store, &fixture, "three"), (0.0, 48.0));
 }
 
 #[test]
@@ -191,7 +191,11 @@ fn a_bar_of_buttons_wraps_two_to_a_line() {
         "after one 8px space"
     );
     assert_eq!(at(&store, &fixture, "b3"), (0.0, 24.0));
-    assert_eq!(at(&store, &fixture, "b4").1, 24.0);
+    assert_eq!(
+        at(&store, &fixture, "b4"),
+        (58.0, 24.0),
+        "after one 8px space"
+    );
     assert_eq!(at(&store, &fixture, "b5"), (0.0, 48.0));
 }
 

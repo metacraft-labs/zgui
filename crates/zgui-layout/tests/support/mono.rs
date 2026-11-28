@@ -280,15 +280,14 @@ fn items(clusters: &[Cluster], boxes: &[InlineBoxGeometry]) -> Vec<Item> {
 
 /// Greedy line breaking: take a break at the last opportunity that still fits.
 ///
-/// The opportunities are the engine's: before a space, and before and after every atomic inline,
+/// The opportunities are the engine's: after a space, and before and after every atomic inline,
 /// which CSS Text 3 §5.1 treats like an ideographic character (and CSS 2.1 §16.6 leaves wrapping
 /// to `white-space`). Chromium 141 breaks the same places: between two inline blocks with nothing
 /// between them, and between a word and an inline block that touches it. The edges of a nested
 /// inline box are glued and offer none: Chromium does not break `word<span>word</span>word`.
 ///
-/// One simplification remains: a line broken at a space starts with that space here, where the
-/// engine and Chromium hang it at the end of the line before. So what follows on a wrapped line
-/// sits one space further in.
+/// A space hangs at the end of the line it ends, as CSS Text 3 §4.1.2 says and the engine and
+/// Chromium do, so a wrapped line starts at its first word.
 ///
 /// Returns each line's clusters as a range, and the boxes on it with the advance before each.
 fn break_into_lines(
@@ -314,12 +313,28 @@ fn break_into_lines(
         Item::Cluster(index) => clusters[index].advance.0,
         Item::Box(index) => boxes[index].width.0,
     };
-    // An edge of a nested inline box is glued: no opportunity either side of it.
+    // A break between `at - 1` and `at` is allowed after a space and before and after an atomic
+    // inline. An edge of a nested inline box is glued: a start edge goes with what follows it and an
+    // end edge with what precedes it, so the opportunity is looked for past them.
     let atomic = |at: usize| matches!(items[at], Item::Box(index) if !boxes[index].glued);
+    let edge = |at: usize, opening: bool| matches!(items[at], Item::Box(index) if boxes[index].glued && boxes[index].opens == opening);
+    let space = |at: usize| matches!(items[at], Item::Cluster(index) if clusters[index].breakable);
     let opportunity_before = |at: usize| {
-        atomic(at)
-            || matches!(items[at], Item::Cluster(index) if clusters[index].breakable)
-            || (at > 0 && atomic(at - 1))
+        if at == 0 || edge(at - 1, true) || edge(at, false) {
+            return false;
+        }
+        let mut left = at - 1;
+        while edge(left, false) {
+            if left == 0 {
+                return false;
+            }
+            left -= 1;
+        }
+        let mut right = at;
+        while right < items.len() && edge(right, true) {
+            right += 1;
+        }
+        space(left) || atomic(left) || (right < items.len() && atomic(right))
     };
     let limit = |line: usize| {
         request
@@ -334,6 +349,8 @@ fn break_into_lines(
     let mut start = 0;
     let mut advance = request.indent().0;
     let mut last_opportunity = None;
+    // The advance of the spaces that end the line so far, which hang.
+    let mut hung = 0.0;
     for (at, &item) in items.iter().enumerate() {
         if let Item::Cluster(index) = item
             && clusters[index].forced
@@ -341,21 +358,35 @@ fn break_into_lines(
             ranges.push((start, at));
             start = at + 1;
             advance = 0.0;
+            hung = 0.0;
             last_opportunity = None;
             continue;
         }
         if at > start && opportunity_before(at) {
             last_opportunity = Some(at);
         }
-        let fits = match limit(ranges.len()).filter(|_| wrapping) {
-            Some(limit) => advance + width(item) <= limit,
-            None => true,
-        };
+        // A space at the end of a line hangs (CSS Text 3 §4.1.2): it never breaks the line itself,
+        // and the break after it leaves it at the end of this one. An edge of an inline box after
+        // it is measured without it, since the space still ends the line there.
+        let glued = matches!(item, Item::Box(index) if boxes[index].glued);
+        let measured = if glued { advance - hung } else { advance };
+        let fits = space(at)
+            || (glued && width(item) == 0.0)
+            || match limit(ranges.len()).filter(|_| wrapping) {
+                Some(limit) => measured + width(item) <= limit,
+                None => true,
+            };
+        if space(at) {
+            hung += width(item);
+        } else if !glued {
+            hung = 0.0;
+        }
         if !fits && at > start && (last_opportunity.is_some() || emergency) {
             let split = last_opportunity.unwrap_or(at);
             ranges.push((start, split));
             start = split;
             advance = items[start..=at].iter().map(|&held| width(held)).sum();
+            hung = 0.0;
             last_opportunity = None;
         } else {
             advance += width(item);
@@ -430,8 +461,24 @@ fn assemble(shaped: &ShapedParagraph<MonoLayout>, request: &BreakRequest<'_>) ->
         let width = text_advance + box_advance;
         let indent = if index == 0 { request.indent().0 } else { 0.0 };
         let band = request.bands.at(index);
+        // The spaces that end the line hang (CSS Text 3 §4.1.2): they count in its width, as the
+        // engine counts them, and alignment places the line without them, as the engine does.
+        let spaces: f32 = clusters[start..end]
+            .iter()
+            .rev()
+            .take_while(|cluster| cluster.breakable)
+            .map(|cluster| cluster.advance.0)
+            .sum();
+        let after_spaces = width - spaces;
+        let hanging = if on_line.iter().any(|(geometry, before)| {
+            !geometry.glued && *before + geometry.width.0 > after_spaces
+        }) {
+            0.0
+        } else {
+            spaces
+        };
         let offset = band.map_or(0.0, |band| band.offset.0)
-            + align_offset(request, CssPx(width + indent), band).0
+            + align_offset(request, CssPx(width - hanging + indent), band).0
             + indent;
 
         let baseline = CssPx(top.0 + ascent.0);

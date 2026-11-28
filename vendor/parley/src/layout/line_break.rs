@@ -167,6 +167,19 @@ pub struct BreakerState {
     prev_boundary: Option<PrevBoundaryState>,
     /// Saved breaker state for the last emergency line-breaking opportunity
     emergency_boundary: Option<PrevBoundaryState>,
+    // ZGUI-PATCH: where the run of opening glued boxes just placed starts.
+    /// The state before a run of glued boxes that open inline boxes, placed since the last cluster.
+    /// A line-breaking opportunity at the cluster after the run is taken here instead, so the
+    /// boxes go to the next line with the content they open.
+    open_run: Option<PrevBoundaryState>,
+    /// The line so far holds nothing but glued opening boxes: a boundary at the next cluster is
+    /// no opportunity, as at the start of a line.
+    open_at_start: bool,
+    // ZGUI-PATCH: a space overflowed and hangs; the line ends at the next content.
+    /// Set when a space overflowed the line. The space hangs at its end (CSS Text 3 §4.1.2), and
+    /// more spaces and the end edges of inline boxes join it there; the next content takes the
+    /// opportunity after them.
+    hang_break: bool,
 }
 
 impl Default for BreakerState {
@@ -185,6 +198,9 @@ impl Default for BreakerState {
             line: LineState::default(),
             prev_boundary: None,
             emergency_boundary: None,
+            open_run: None,
+            open_at_start: false,
+            hang_break: false,
         }
     }
 }
@@ -209,6 +225,16 @@ impl BreakerState {
 
     /// Store the current iteration state so that we can revert to it if we later want to take
     /// the line breaking opportunity at this point.
+    // ZGUI-PATCH: the state a line-breaking opportunity here would save.
+    fn boundary_here(&self) -> PrevBoundaryState {
+        PrevBoundaryState {
+            item_idx: self.item_idx,
+            run_idx: self.run_idx,
+            cluster_idx: self.cluster_idx,
+            state: self.line.clone(),
+        }
+    }
+
     fn mark_line_break_opportunity(&mut self) {
         self.prev_boundary = Some(PrevBoundaryState {
             item_idx: self.item_idx,
@@ -350,6 +376,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         self.state.line.running_line_height = 0.;
         self.state.prev_boundary = None;
         self.state.emergency_boundary = None;
+        self.state.open_run = None;
+        self.state.open_at_start = false;
+        self.state.hang_break = false;
 
         self.finish_line(self.lines.lines.len() - 1, line_height);
 
@@ -520,13 +549,56 @@ impl<'a, B: Brush> BreakLines<'a, B> {
 
                     // ZGUI-PATCH: a glued box breaks like the text around it. It offers no break
                     // opportunity of its own, and one that does not fit takes the last opportunity
-                    // before it, or overflows the line when there is none.
-                    if inline_box.glued {
-                        if next_x <= max_advance
-                            || self.state.line.text_wrap_mode != TextWrapMode::Wrap
-                        {
+                    // before it, or overflows the line when there is none. An opportunity just
+                    // before a closing box moves after it, so the box stays with what it closes;
+                    // see `open_run` for the opening side.
+                    let (glued, opens) = (inline_box.glued, inline_box.opens);
+                    if self.state.hang_break {
+                        if glued && !opens {
+                            // An end edge stays with the hanging space it follows.
                             self.state
                                 .append_inline_box_to_line(next_x, height_contribution);
+                            self.state.mark_line_break_opportunity();
+                            continue;
+                        }
+                        if let Some(prev) = self.state.prev_boundary.take() {
+                            self.state.reset_to(prev);
+                            return self.start_new_line(
+                                BreakReason::Regular,
+                                max_advance,
+                                line_indent,
+                            );
+                        }
+                    }
+                    let open_run = if glued && opens {
+                        None
+                    } else {
+                        self.state.open_at_start = false;
+                        self.state.open_run.take()
+                    };
+                    if glued {
+                        // An edge that takes no room never breaks the line.
+                        let fits = next_x <= max_advance
+                            || width_contribution == 0.0
+                            || self.state.line.text_wrap_mode != TextWrapMode::Wrap;
+                        let marked_here = self.state.prev_boundary.as_ref().is_some_and(|prev| {
+                            prev.item_idx == self.state.item_idx
+                                && prev.cluster_idx == self.state.cluster_idx
+                        });
+                        if opens && self.state.open_run.is_none() {
+                            if self.state.line.x != 0.0 {
+                                self.state.open_run = Some(self.state.boundary_here());
+                            } else {
+                                self.state.open_at_start = true;
+                            }
+                        }
+                        let closes_after_mark = !opens && marked_here;
+                        if fits || closes_after_mark {
+                            self.state
+                                .append_inline_box_to_line(next_x, height_contribution);
+                            if closes_after_mark {
+                                self.state.mark_line_break_opportunity();
+                            }
                         } else if let Some(prev) = self.state.prev_boundary.take() {
                             self.state.reset_to(prev);
                             return self.start_new_line(
@@ -561,16 +633,26 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         self.state.mark_line_break_opportunity();
                     } else {
                         // If we're at the start of the line, this box will never fit, so consume it and accept the overflow.
-                        let reason = if self.state.line.x == 0.0 {
-                            // println!("BOX EMERGENCY BREAK");
+                        // ZGUI-PATCH: and keep the line open after it, with an opportunity there, as
+                        // after any box. Ending the line at once started the next line with the
+                        // space after the box, where CSS Text 3 §4.1.2 hangs that space at the end
+                        // of this one.
+                        if self.state.line.x == 0.0 {
                             self.state
                                 .append_inline_box_to_line(next_x, height_contribution);
-                            BreakReason::Emergency
+                            self.state.mark_line_break_opportunity();
                         } else {
-                            // println!("BOX BREAK");
-                            BreakReason::Regular
-                        };
-                        return self.start_new_line(reason, max_advance, line_indent);
+                            // ZGUI-PATCH: the break before a box is taken before the start edges
+                            // that open into it, so they go to the next line with it.
+                            if let Some(open_run) = open_run {
+                                self.state.reset_to(open_run);
+                            }
+                            return self.start_new_line(
+                                BreakReason::Regular,
+                                max_advance,
+                                line_indent,
+                            );
+                        }
                     }
                 }
                 LayoutItemKind::TextRun => {
@@ -597,6 +679,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         let max_height_exceeded = self.state.line.max_height_exceeded;
                         let style = &self.layout.data.styles[cluster.data.style_index as usize];
 
+                        // ZGUI-PATCH: content after a hanging space starts the next line.
+                        if self.state.hang_break && !is_space && !is_newline {
+                            if let Some(prev) = self.state.prev_boundary.take() {
+                                self.state.reset_to(prev);
+                                return self.start_new_line(
+                                    BreakReason::Regular,
+                                    max_advance,
+                                    line_indent,
+                                );
+                            }
+                        }
+
                         // Lag text_wrap_mode style by one cluster
                         let text_wrap_mode = self.state.line.text_wrap_mode;
                         self.state.line.text_wrap_mode = style.text_wrap_mode;
@@ -607,7 +701,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                             // We also don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
                             // line breaks. We should accept the overflowing fragment in that scenario.
                             if !is_ligature_continuation && self.state.line.x != 0.0 {
-                                self.state.mark_line_break_opportunity();
+                                // ZGUI-PATCH: before the opening boxes that lead into this cluster.
+                                if let Some(open_run) = self.state.open_run.take() {
+                                    self.state.prev_boundary = Some(open_run);
+                                } else if !self.state.open_at_start {
+                                    // ZGUI-PATCH: none after opening boxes that start the line.
+                                    self.state.mark_line_break_opportunity();
+                                }
                                 // break_opportunity = true;
                             }
                         } else if is_newline {
@@ -630,6 +730,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         {
                             self.state.mark_emergency_break_opportunity();
                         }
+
+                        // ZGUI-PATCH: a run of opening boxes leads into this cluster only.
+                        self.state.open_run = None;
+                        self.state.open_at_start = false;
 
                         // If current cluster is the start of a ligature, then advance state to include
                         // the remaining clusters that make up the ligature
@@ -676,11 +780,11 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                     return self.max_height_break_data(line_height);
                                 }
                                 self.state.append_cluster_to_line(next_x, line_height);
-                                return self.start_new_line(
-                                    BreakReason::Regular,
-                                    max_advance,
-                                    line_indent,
-                                );
+                                // ZGUI-PATCH: the line ends at the next content, so more spaces
+                                // and the end edges after this one hang with it.
+                                self.state.mark_line_break_opportunity();
+                                self.state.hang_break = true;
+                                continue;
                             }
                             // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                             //

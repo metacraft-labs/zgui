@@ -1,7 +1,7 @@
 //! What one shaping pass produces: a cluster per character, and nothing a font decided.
 
 use zgui_geom::CssPx;
-use zgui_text::ParagraphContent;
+use zgui_text::{InlineBoxGeometry, ParagraphContent};
 
 use crate::shaper::metrics;
 
@@ -40,6 +40,9 @@ pub struct MonoLayout {
     pub clusters: Vec<Cluster>,
     /// The last break's lines, as half-open cluster ranges.
     pub lines: Vec<(usize, usize)>,
+    /// The inline boxes each of those lines holds: an index into the paragraph's boxes, and the
+    /// advance before the box on its line.
+    pub placed: Vec<Vec<(usize, f32)>>,
     /// The geometry those lines came out at, kept so that positioned glyphs can be reported
     /// without breaking a second time and getting a second opinion.
     pub geometry: Vec<zgui_text::LineGeometry>,
@@ -89,21 +92,37 @@ pub fn shape(content: &ParagraphContent<'_>) -> Vec<Cluster> {
     clusters
 }
 
-/// The narrowest and widest the clusters can be laid out at.
+/// The narrowest and widest the clusters and the boxes can be laid out at.
 ///
-/// The narrow figure is the widest single word, because a break may only be taken at a space; the
-/// wide figure is every cluster on one line.
-pub fn content_widths(clusters: &[Cluster]) -> (CssPx, CssPx) {
+/// The narrow figure is the widest run between two break opportunities: a word, or an atomic inline,
+/// which a line may break either side of; an edge of an inline box widens the word it sits in. The
+/// wide figure is everything on one line.
+pub fn content_widths(clusters: &[Cluster], boxes: &[InlineBoxGeometry]) -> (CssPx, CssPx) {
     let mut widest_word: f32 = 0.0;
     let mut word: f32 = 0.0;
     let mut total: f32 = 0.0;
-    for cluster in clusters {
-        total += cluster.advance.0;
-        if cluster.breakable {
-            widest_word = widest_word.max(word);
-            word = 0.0;
-        } else {
-            word += cluster.advance.0;
+    for item in crate::shaper::breaking::items(clusters, boxes) {
+        match item {
+            crate::shaper::breaking::Item::Cluster(index) => {
+                let cluster = &clusters[index];
+                total += cluster.advance.0;
+                if cluster.breakable {
+                    widest_word = widest_word.max(word);
+                    word = 0.0;
+                } else {
+                    word += cluster.advance.0;
+                }
+            }
+            crate::shaper::breaking::Item::Box(index) => {
+                let inline_box = &boxes[index];
+                total += inline_box.width.0;
+                if inline_box.glued {
+                    word += inline_box.width.0;
+                } else {
+                    widest_word = widest_word.max(word).max(inline_box.width.0);
+                    word = 0.0;
+                }
+            }
         }
     }
     (CssPx(widest_word.max(word)), CssPx(total))
@@ -145,7 +164,7 @@ mod tests {
         assert!(clusters[2].breakable, "the space is the break opportunity");
         assert_eq!(clusters[0].advance, CssPx(8.0));
 
-        let (min, max) = content_widths(&clusters);
+        let (min, max) = content_widths(&clusters, &[]);
         assert_eq!(min, CssPx(16.0), "the widest word is two clusters");
         assert_eq!(max, CssPx(40.0), "five clusters on one line");
     }
@@ -174,7 +193,7 @@ mod tests {
                 paragraph: &paragraph,
                 scale,
             };
-            content_widths(&shape(&content)).1
+            content_widths(&shape(&content), &[]).1
         };
 
         assert_eq!(at(1.0), CssPx(16.0));

@@ -109,3 +109,33 @@ cluster of text does. In the content widths it widens the word it sits in instea
 `zgui-text-parley`'s `reach` models a glued box the same way when it keeps a pass's lines, and its
 `rebreak` property test draws glued boxes. `crates/zgui-text-parley/tests/atomic_wrap.rs` pins
 the breaks against Chromium.
+
+### Which side of a break an edge goes to (`inline_box.rs`, `layout/line_break.rs`)
+
+`InlineBox` also has `opens`, for a glued box that is the start edge of its inline box. CSS Text 3
+§5.1 puts a break between two pieces of content, and an edge belongs to the content it bounds, so:
+
+- an opportunity at the cluster after a run of start edges is taken before the run, and a break
+  before an atomic inline is taken before the start edges that open into it: `ab <span>word` broken
+  at the space starts the next line with the span's padding, as Chromium does;
+- an opportunity just before an end edge is taken after it, so the end edge stays with what it
+  closes.
+
+### An overflowing box keeps its line open (`layout/line_break.rs`)
+
+Upstream ends the line at once after an inline box too wide for an empty line. The space after it
+then started the next line, where CSS Text 3 §4.1.2 hangs it at the end of this one: `[24] [100]
+[24]` put the last box 4px in. The line now stays open after such a box, with a break opportunity
+there as after any box.
+
+### A hanging space keeps the end edges after it (`layout/line_break.rs`)
+
+Upstream ended the line at a space that overflowed it. The space hangs at the end of the line (CSS
+Text 3 §4.1.2), and so should the end edges after it: the line now ends at the next content, and
+more spaces and end edges join the hanging space. A glued box of no width never breaks a line,
+and a line that holds nothing but start edges so far takes no opportunity at the next cluster, as
+at the start of a line.
+
+`zgui-text-parley`'s `reach` does not model the edge sides: a paragraph where a start edge leads
+into a word or a box, or an end edge follows a box, breaks in the engine on each pass.
+`crates/zgui-text-parley/tests/line_ends.rs` pins these against Chromium.

@@ -251,6 +251,7 @@ fn inline_box(geometry: &InlineBoxGeometry, prefix: usize) -> parley::InlineBox 
         width: geometry.width.0,
         height: geometry.shaper_height().0,
         glued: geometry.glued,
+        opens: geometry.opens,
     }
 }
 
@@ -390,6 +391,7 @@ mod tests {
                     ascent: CssPx(9.0),
                     shift: CssPx::ZERO,
                     glued: false,
+                    opens: false,
                 }];
                 let paragraph = ParagraphStyle {
                     direction,

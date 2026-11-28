@@ -377,6 +377,31 @@ fn steps(layout: &parley::Layout<SlotBrush>) -> Option<Box<[Step]>> {
             at = index + 1;
         }
     }
+    // Where an edge of an inline box moves a break opportunity, the engine takes it on the far side
+    // of the edge: before a run of start edges that leads into a word or a box, and after an end
+    // edge that follows a box. The step reading below does not repeat that, so such a paragraph breaks in the
+    // engine on each pass.
+    for (index, step) in steps.iter().enumerate() {
+        if !step.is(GLUED) {
+            continue;
+        }
+        let opens = boxes
+            .get(usize::from(step.count))
+            .is_some_and(|held| held.opens);
+        if opens {
+            let next = steps[index + 1..].iter().find(|later| {
+                !(later.is(GLUED)
+                    && boxes
+                        .get(usize::from(later.count))
+                        .is_some_and(|held| held.opens))
+            });
+            if next.is_some_and(|later| later.is(BOX) || (!later.is(GLUED) && later.is(WORD))) {
+                return None;
+            }
+        } else if index > 0 && steps[index - 1].is(BOX) {
+            return None;
+        }
+    }
     (at == advances.len() && at > 0).then(|| steps.into_boxed_slice())
 }
 

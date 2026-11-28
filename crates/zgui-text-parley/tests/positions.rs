@@ -164,6 +164,7 @@ fn a_run_reports_where_its_text_starts() {
         ascent: zgui_geom::CssPx(0.0),
         shift: zgui_geom::CssPx(0.0),
         glued: true,
+        opens: id == 0,
     };
     let boxes = [edge(0, 6), edge(1, 10)];
     let content = zgui_text::ParagraphContent {

@@ -1,63 +1,145 @@
-//! Greedy line breaking over the clusters, at spaces only.
+//! Greedy line breaking over the clusters and the inline boxes.
 
-use zgui_text::BreakRequest;
+use zgui_text::{BreakRequest, InlineBoxGeometry};
 use zgui_text_style::WrapMode;
 
 use crate::shaper::cluster::Cluster;
 
-/// Breaks `clusters` into lines for `request`, as half-open cluster ranges.
+/// One thing on a line, in logical order: a character's cluster or an inline box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Item {
+    /// An index into the clusters.
+    Cluster(usize),
+    /// An index into the paragraph's boxes.
+    Box(usize),
+}
+
+/// The clusters and the boxes in the order a line holds them. A box sits before the character at
+/// its offset, after every character and box before it; boxes at one offset keep their order.
+pub(crate) fn items(clusters: &[Cluster], boxes: &[InlineBoxGeometry]) -> Vec<Item> {
+    let mut order: Vec<usize> = (0..boxes.len()).collect();
+    order.sort_by_key(|&index| boxes[index].offset);
+    let mut out = Vec::with_capacity(clusters.len() + boxes.len());
+    let mut next = 0;
+    for (index, cluster) in clusters.iter().enumerate() {
+        while next < order.len() && boxes[order[next]].offset <= cluster.offset {
+            out.push(Item::Box(order[next]));
+            next += 1;
+        }
+        out.push(Item::Cluster(index));
+    }
+    out.extend(order[next..].iter().map(|&index| Item::Box(index)));
+    out
+}
+
+/// What one break produced: each line's clusters as a half-open range, and the boxes on each line
+/// with the advance before each box on it.
+pub type Lines = (Vec<(usize, usize)>, Vec<Vec<(usize, f32)>>);
+
+/// Breaks `clusters` and the request's boxes into lines for `request`.
 ///
-/// The rule is the simplest one that is still a line breaker: take the last break opportunity that
-/// fits, and if none does, overflow the line rather than splitting a word. A paragraph that cannot
-/// wrap at all — `text-wrap-mode: nowrap` — is one line however wide it is.
-///
-/// Atomic inlines occupy the line beside the text, so their widths are added at the offsets they
-/// sit at; a line holding a wide image therefore breaks earlier than the same text alone, which is
-/// what makes a break-key test over inline boxes mean anything.
-pub fn into_lines(clusters: &[Cluster], request: &BreakRequest<'_>) -> Vec<(usize, usize)> {
+/// The rule is greedy: take the last break opportunity that fits, and if none does, overflow the
+/// line rather than splitting a word. The opportunities are the ones a browser takes: after a
+/// space, and before and after an atomic inline (CSS Text 3 §5.1 treats one like an ideographic
+/// character). An edge of a nested inline box is glued: a start edge goes with what follows it and
+/// an end edge with what precedes it. A space at the end of a line hangs (CSS Text 3 §4.1.2): it
+/// never breaks the line itself, and the break after it leaves it on this line, so a wrapped line
+/// starts at its first word. A paragraph that cannot wrap at all — `text-wrap-mode: nowrap` — is
+/// one line however wide it is.
+pub fn into_lines(clusters: &[Cluster], request: &BreakRequest<'_>) -> Lines {
+    let boxes = request.boxes;
+    let items = items(clusters, boxes);
     let wrapping = request
         .runs
         .first()
         .is_none_or(|run| run.style.wrap_mode == WrapMode::Wrap);
-    let Some(limit) = request.max_advance.filter(|_| wrapping) else {
-        return vec![(0, clusters.len())];
+    let limit = request.max_advance.filter(|_| wrapping);
+    let width = |item: Item| match item {
+        Item::Cluster(index) => clusters[index].advance.0,
+        Item::Box(index) => boxes[index].width.0,
+    };
+    let atomic = |at: usize| matches!(items[at], Item::Box(index) if !boxes[index].glued);
+    let edge = |at: usize, opening: bool| matches!(items[at], Item::Box(index) if boxes[index].glued && boxes[index].opens == opening);
+    let space = |at: usize| matches!(items[at], Item::Cluster(index) if clusters[index].breakable);
+    let opportunity_before = |at: usize| {
+        if at == 0 || edge(at - 1, true) || edge(at, false) {
+            return false;
+        }
+        let mut left = at - 1;
+        while edge(left, false) {
+            if left == 0 {
+                return false;
+            }
+            left -= 1;
+        }
+        let mut right = at;
+        while right < items.len() && edge(right, true) {
+            right += 1;
+        }
+        space(left) || atomic(left) || (right < items.len() && atomic(right))
     };
 
-    let mut lines = Vec::new();
+    let mut ranges = Vec::new();
     let mut start = 0;
     let mut advance = request.indent().0;
     let mut last_opportunity = None;
-
-    for (index, cluster) in clusters.iter().enumerate() {
-        let boxes: f32 = request
-            .boxes
-            .iter()
-            .filter(|geometry| geometry.offset == cluster.offset)
-            .map(|geometry| geometry.width.0)
-            .sum();
-        if cluster.breakable && index > start {
-            last_opportunity = Some(index);
-        }
-        let wanted = cluster.advance.0 + boxes;
-        // A line with no break opportunity on it overflows rather than splitting a word: there is
-        // nowhere legal to break, and inventing a break inside a word is a different feature.
-        if let Some(split) =
-            last_opportunity.filter(|_| advance + wanted > limit.0 && index > start)
-        {
-            lines.push((start, split));
-            start = split;
-            advance = clusters[start..=index]
-                .iter()
-                .map(|held| held.advance.0)
-                .sum::<f32>()
-                + boxes;
-            last_opportunity = None;
-        } else {
-            advance += wanted;
+    // The advance of the spaces that end the line so far, which hang.
+    let mut hung = 0.0;
+    if let Some(limit) = limit {
+        for (at, &item) in items.iter().enumerate() {
+            if at > start && opportunity_before(at) {
+                last_opportunity = Some(at);
+            }
+            // A line with no break opportunity on it overflows rather than splitting a word: there
+            // is nowhere legal to break, and inventing a break inside a word is a different feature.
+            // A space hangs; an edge of an inline box after it is measured without it.
+            let glued = matches!(item, Item::Box(index) if boxes[index].glued);
+            let measured = if glued { advance - hung } else { advance };
+            let fits =
+                space(at) || (glued && width(item) == 0.0) || measured + width(item) <= limit.0;
+            if space(at) {
+                hung += width(item);
+            } else if !glued {
+                hung = 0.0;
+            }
+            if let Some(split) = last_opportunity.filter(|_| !fits && at > start) {
+                ranges.push((start, split));
+                start = split;
+                advance = items[start..=at].iter().map(|&held| width(held)).sum();
+                hung = 0.0;
+                last_opportunity = None;
+            } else {
+                advance += width(item);
+            }
         }
     }
-    lines.push((start, clusters.len()));
-    lines
+    ranges.push((start, items.len()));
+
+    // The clusters before each item, which turns an item range into a cluster range.
+    let mut before = Vec::with_capacity(items.len() + 1);
+    let mut count = 0;
+    for item in &items {
+        before.push(count);
+        if matches!(item, Item::Cluster(_)) {
+            count += 1;
+        }
+    }
+    before.push(count);
+    let mut lines = Vec::with_capacity(ranges.len());
+    let mut placed = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        lines.push((before[start], before[end]));
+        let mut pen = 0.0;
+        let mut on_line = Vec::new();
+        for &item in &items[start..end] {
+            if let Item::Box(index) = item {
+                on_line.push((index, pen));
+            }
+            pen += width(item);
+        }
+        placed.push(on_line);
+    }
+    (lines, placed)
 }
 
 #[cfg(test)]
@@ -112,6 +194,8 @@ mod tests {
     #[test]
     fn a_break_is_taken_at_the_last_space_that_fits() {
         // Eight pixels a cluster: "aaa bbb" is 56 wide, so 40 fits "aaa " and breaks before "bbb".
+        // The space hangs at the end of the first line (CSS Text 3 §4.1.2), so the second starts
+        // at its word, as Chromium 141 starts it.
         let text = "aaa bbb";
         let runs = [StyledRun {
             text: 0..text.len(),
@@ -119,11 +203,11 @@ mod tests {
             brush: PaintSlot(0),
         }];
         let paragraph = ParagraphStyle::initial();
-        let lines = into_lines(
+        let (lines, _) = into_lines(
             &clusters(text),
             &request(&runs, &paragraph, Some(CssPx(40.0))),
         );
-        assert_eq!(lines, vec![(0, 3), (3, 7)]);
+        assert_eq!(lines, vec![(0, 4), (4, 7)]);
     }
 
     #[test]
@@ -135,7 +219,7 @@ mod tests {
             brush: PaintSlot(0),
         }];
         let paragraph = ParagraphStyle::initial();
-        let lines = into_lines(
+        let (lines, _) = into_lines(
             &clusters(text),
             &request(&runs, &paragraph, Some(CssPx(16.0))),
         );
@@ -153,7 +237,7 @@ mod tests {
             brush: PaintSlot(0),
         }];
         let paragraph = ParagraphStyle::initial();
-        let lines = into_lines(
+        let (lines, _) = into_lines(
             &clusters(text),
             &request(&runs, &paragraph, Some(CssPx(8.0))),
         );
@@ -169,7 +253,7 @@ mod tests {
             brush: PaintSlot(0),
         }];
         let paragraph = ParagraphStyle::initial();
-        let lines = into_lines(&clusters(text), &request(&runs, &paragraph, None));
+        let (lines, _) = into_lines(&clusters(text), &request(&runs, &paragraph, None));
         assert_eq!(lines, vec![(0, 7)]);
     }
 }

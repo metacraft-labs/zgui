@@ -193,6 +193,7 @@ fn changing_vertical_align_moves_the_box_without_reshaping() {
             ascent: CssPx(20.0),
             shift: CssPx(shift),
             glued: false,
+            opens: false,
         }];
         let content = ParagraphContent {
             text,
@@ -254,6 +255,7 @@ fn atomic_inlines_are_placed_on_the_line_they_landed_on() {
         ascent: CssPx(12.0),
         shift: CssPx(0.0),
         glued: false,
+        opens: false,
     }];
     let content = ParagraphContent {
         text,

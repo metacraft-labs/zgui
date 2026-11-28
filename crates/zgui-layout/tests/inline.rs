@@ -334,8 +334,12 @@ fn a_taller_run_makes_only_its_own_line_taller() {
     // paragraph that mixes sizes.
     let (_, resolution) = resolve(
         Element::new("root").children(vec![Element::new("para").children(vec![
-            Element::new("small").text("aaaa bbbb cccc"),
-            Element::new("big").text(" X"),
+            // The space is the small run's: a space hangs at the end of the line it ends (CSS
+            // Text 3 §4.1.2), and one written in the big run would make that line big as well, as
+            // Chromium 141 does (measured: `aaaa bbbb cccc<span 32px> X</span>` broken at the
+            // space makes the first line 37px tall, `aaaa bbbb cccc <span 32px>X</span>` 18px).
+            Element::new("small").text("aaaa bbbb cccc "),
+            Element::new("big").text("X"),
         ])]),
         "root { display: block; width: 120px }
          para { display: block }
@@ -570,7 +574,8 @@ fn spanned(span: &str, para: &str) -> (LayoutStore, InlineResolution) {
 #[test]
 fn a_nested_inline_box_has_one_slice_per_line_it_crosses() {
     // Ten characters fit a line. The span's start edge is margin 3, border 1 and padding 2, six in
-    // all, so the first line ends after `aa bbbb` and the second holds ` cccc`.
+    // all, so the first line ends after `aa bbbb ` and the second holds `cccc`: the space hangs at
+    // the end of the first (CSS Text 3 §4.1.2), as in Chromium 141.
     let (_, resolution) = spanned(
         "margin: 0 3px; border: 1px solid black; padding: 0 2px",
         "width: 80px",
@@ -603,10 +608,10 @@ fn a_nested_inline_box_has_one_slice_per_line_it_crosses() {
         resolution.lines[1].offset,
         "a continued part starts at the line's start",
     );
-    // ` cccc` is five characters, then the end border and padding.
+    // `cccc` is four characters, then the end border and padding.
     close(
         second.x + second.width,
-        5.0 * ADVANCE + 3.0,
+        4.0 * ADVANCE + 3.0,
         "the last part ends at its border edge",
     );
     assert_eq!(second.border.left, 0.0);

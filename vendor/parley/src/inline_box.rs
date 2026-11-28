@@ -22,6 +22,11 @@ pub struct InlineBox {
     /// each edge of a nested inline box (`<span>`) to the breaker as a box of their width, and
     /// CSS does not break a line at an element boundary inside a word.
     pub glued: bool,
+    // ZGUI-PATCH: which side of a line break a glued box goes to.
+    /// For a glued box, whether it opens an inline box. A break opportunity just before the content
+    /// a run of opening boxes leads into is taken before those boxes, so they go to the next line
+    /// with it; one just before a run of closing boxes is taken after them.
+    pub opens: bool,
 }
 
 /// Whether a box is in-flow (takes up space in the layout) or out-of-flow (e.g. absolutely positioned)

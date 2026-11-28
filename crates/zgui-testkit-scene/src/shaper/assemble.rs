@@ -23,53 +23,57 @@ pub fn geometry(
     let mut widest: f32 = 0.0;
 
     for (index, (start, end)) in shaped.engine.lines.iter().copied().enumerate() {
-        let on_line: Vec<&InlineBoxGeometry> = shaped
-            .boxes()
+        let on_line: Vec<(&InlineBoxGeometry, f32)> = shaped.engine.placed[index]
             .iter()
-            .filter(|geometry| {
-                clusters
-                    .get(start)
-                    .is_none_or(|first| geometry.offset >= first.offset)
-                    && clusters
-                        .get(end)
-                        .is_none_or(|past| geometry.offset < past.offset)
-            })
+            .map(|&(at, before)| (&shaped.boxes()[at], before))
             .collect();
 
         // A line box is at least as tall as the strut, and taller where an inline box reaches past
         // it. The shifted height is what an inline box occupies above the baseline, which is where
         // `vertical-align` has already been folded in.
-        let ascent = on_line.iter().fold(strut.ascent(), |tallest, geometry| {
-            CssPx(tallest.0.max(geometry.shaper_height().0))
-        });
-        let descent = on_line.iter().fold(strut.descent(), |deepest, geometry| {
-            CssPx(deepest.0.max(geometry.below_baseline().0))
-        });
+        let ascent = on_line
+            .iter()
+            .fold(strut.ascent(), |tallest, (geometry, _)| {
+                CssPx(tallest.0.max(geometry.shaper_height().0))
+            });
+        let descent = on_line
+            .iter()
+            .fold(strut.descent(), |deepest, (geometry, _)| {
+                CssPx(deepest.0.max(geometry.below_baseline().0))
+            });
 
         let text_advance: f32 = clusters[start..end].iter().map(|held| held.advance.0).sum();
-        let box_advance: f32 = on_line.iter().map(|geometry| geometry.width.0).sum();
+        let box_advance: f32 = on_line.iter().map(|(geometry, _)| geometry.width.0).sum();
         let width = text_advance + box_advance;
         let indent = if index == 0 { request.indent().0 } else { 0.0 };
-        let offset = align_offset(request, CssPx(width + indent)).0 + indent;
+        // The spaces that end the line hang (CSS Text 3 §4.1.2): they count in its width, as the
+        // engine counts them, and alignment places the line without them, as the engine does.
+        let spaces: f32 = clusters[start..end]
+            .iter()
+            .rev()
+            .take_while(|cluster| cluster.breakable)
+            .map(|cluster| cluster.advance.0)
+            .sum();
+        let after_spaces = width - spaces;
+        let hanging = if on_line.iter().any(|(geometry, before)| {
+            !geometry.glued && *before + geometry.width.0 > after_spaces
+        }) {
+            0.0
+        } else {
+            spaces
+        };
+        let offset = align_offset(request, CssPx(width - hanging + indent)).0 + indent;
         let baseline = CssPx(top.0 + ascent.0);
 
-        // A box sits before the character at its offset, after every character and box before it.
-        let mut boxes_before = 0.0;
-        for geometry in on_line {
-            let text_before: f32 = clusters[start..end]
-                .iter()
-                .filter(|held| held.offset < geometry.offset)
-                .map(|held| held.advance.0)
-                .sum();
+        for (geometry, before) in on_line {
             boxes.push(InlineBoxPlacement {
                 id: geometry.id,
                 origin: Point::new(
-                    CssPx(offset + text_before + boxes_before),
+                    CssPx(offset + before),
                     CssPx(baseline.0 - geometry.shaper_height().0),
                 ),
                 line: index,
             });
-            boxes_before += geometry.width.0;
         }
 
         widest = widest.max(width + indent);

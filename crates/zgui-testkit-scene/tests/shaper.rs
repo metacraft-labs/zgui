@@ -122,8 +122,10 @@ fn breaking_takes_the_last_opportunity_that_fits() {
     let mut paragraph = Paragraph::new("aaa bbb", TextStyle::initial());
     let broken = paragraph.run(Some(CssPx(40.0)));
     assert_eq!(broken.geometry.lines.len(), 2);
-    assert_eq!(broken.geometry.lines[0].text, 0..3);
-    assert_eq!(broken.geometry.lines[1].text, 3..7);
+    // The space hangs at the end of the first line (CSS Text 3 §4.1.2) and the second starts at
+    // its word, where Chromium 141 starts it.
+    assert_eq!(broken.geometry.lines[0].text, 0..4);
+    assert_eq!(broken.geometry.lines[1].text, 4..7);
     assert_eq!(broken.geometry.lines[1].top, CssPx(16.0));
 }
 
@@ -162,6 +164,7 @@ fn an_inline_box_makes_its_line_taller_and_is_placed_on_it() {
         ascent: CssPx(40.0),
         shift: CssPx::ZERO,
         glued: false,
+        opens: false,
     }];
 
     let broken = paragraph.run(Some(CssPx(200.0)));
@@ -185,6 +188,7 @@ fn a_vertical_align_shift_moves_the_box_without_reshaping() {
         ascent: CssPx(8.0),
         shift: CssPx::ZERO,
         glued: false,
+        opens: false,
     }];
     let flat = paragraph.run(Some(CssPx(200.0)));
 

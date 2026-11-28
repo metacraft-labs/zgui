@@ -48,6 +48,7 @@ struct Spec {
     width: f32,
     height: f32,
     glued: bool,
+    opens: bool,
 }
 
 /// An atomic inline, 24px tall.
@@ -57,17 +58,29 @@ fn atomic(offset: usize, width: f32) -> Spec {
         width,
         height: 24.0,
         glued: false,
+        opens: false,
     }
 }
 
-/// An edge of a nested inline box: zero height, glued.
-fn edge(offset: usize, width: f32) -> Spec {
+/// An edge of a nested inline box: zero height, glued; `opens` for its start edge.
+fn edge(offset: usize, width: f32, opens: bool) -> Spec {
     Spec {
         offset,
         width,
         height: 0.0,
         glued: true,
+        opens,
     }
+}
+
+/// The start edge of a nested inline box.
+fn opening(offset: usize, width: f32) -> Spec {
+    edge(offset, width, true)
+}
+
+/// Its end edge.
+fn closing(offset: usize, width: f32) -> Spec {
+    edge(offset, width, false)
 }
 
 /// What a break came out at: the number of lines, each box's line and x by id (ids count from 1
@@ -117,6 +130,7 @@ fn lay_out(text: &str, boxes: &[Spec], width: f32, wrap: WrapMode) -> Broken {
             ascent: CssPx(spec.height),
             shift: CssPx(0.0),
             glued: spec.glued,
+            opens: spec.opens,
         })
         .collect();
     let content = ParagraphContent {
@@ -231,7 +245,7 @@ fn a_word_split_across_an_inline_box_does_not_break_at_its_edges() {
     // broke at both, giving three lines.
     let broken = lay_out(
         "wordwordword",
-        &[edge(4, 0.0), edge(8, 0.0)],
+        &[opening(4, 0.0), closing(8, 0.0)],
         60.0,
         WrapMode::Wrap,
     );
@@ -247,7 +261,7 @@ fn a_padded_edge_widens_its_word_and_still_does_not_break() {
     // `ab<span style="padding-left: 4px">wordwordword</span>`.
     let broken = lay_out(
         "abwordwordword",
-        &[edge(2, 4.0), edge(14, 0.0)],
+        &[opening(2, 4.0), closing(14, 0.0)],
         60.0,
         WrapMode::Wrap,
     );
@@ -260,7 +274,7 @@ fn a_space_before_an_inline_box_is_where_the_line_breaks() {
     // `ab <span>wordwordword</span>`: two lines, broken at the space and not inside the span.
     let broken = lay_out(
         "ab wordwordword",
-        &[edge(3, 0.0), edge(15, 0.0)],
+        &[opening(3, 0.0), closing(15, 0.0)],
         60.0,
         WrapMode::Wrap,
     );

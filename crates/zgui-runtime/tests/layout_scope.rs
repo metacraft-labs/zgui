@@ -44,7 +44,7 @@ root { display: block; width: 400px; height: 300px }
 .row { display: flex; flex-direction: row }
 .cell { display: flex; flex-direction: column; flex-grow: 1 }
 .body { display: block; font-size: 12px }
-.label { display: inline-block; font-size: 12px }
+.label { display: inline-block; font-size: 12px; width: 120px }
 ";
 
 /// How many panels the grid holds.
@@ -316,7 +316,10 @@ fn a_keystroke_lays_out_far_less_than_the_document() {
         harness.settle(16);
     });
     let laid_out = built.control(Counter::NodesRelaidOut);
-    // Far less: a keystroke reaches one label, its panel and the containers above them.
+    // Far less: a keystroke reaches one label, its panel and the containers above them. The label
+    // has a width of its own, so its text can grow without moving anything else: the grid's
+    // columns are `auto`, and an inline block that widened its panel would widen its column, as
+    // it does in a browser, and every panel in that column would be laid out again for that.
     let total = boxes(&harness) / 2;
     let before = line_width_under(&harness, "label");
 

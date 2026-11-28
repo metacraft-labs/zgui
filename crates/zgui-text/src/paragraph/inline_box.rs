@@ -38,6 +38,12 @@ pub struct InlineBoxGeometry {
     /// them). The margin, border and padding at an edge of a nested inline box reach the breaker as
     /// a box too, and those are glued: an element boundary inside a word is no place to break.
     pub glued: bool,
+    /// For a glued box, whether it is the start edge of its inline box rather than the end edge.
+    ///
+    /// A line broken next to an edge leaves a start edge with the content after it and an end edge
+    /// with the content before it (CSS Text 3 §5.1): `ab <span>word</span>` broken at the space
+    /// moves the span's start edge, and its padding, to the next line with `word`, as Chromium does.
+    pub opens: bool,
 }
 
 impl InlineBoxGeometry {
@@ -55,6 +61,7 @@ impl InlineBoxGeometry {
     ///     ascent: CssPx(20.0),
     ///     shift: CssPx(5.0),
     ///     glued: false,
+    ///     opens: false,
     /// };
     /// assert_eq!(raised.shaper_height(), CssPx(25.0));
     /// assert_eq!(raised.below_baseline(), CssPx(-5.0));

@@ -141,7 +141,7 @@ impl ParagraphShaper for MonoShaper {
         );
         self.shapes += 1;
         let clusters = cluster::shape(content);
-        let (min, max) = cluster::content_widths(&clusters);
+        let (min, max) = cluster::content_widths(&clusters, content.boxes);
         let style = content
             .runs
             .first()
@@ -158,6 +158,7 @@ impl ParagraphShaper for MonoShaper {
                 scale: content.scale,
                 clusters,
                 lines: Vec::new(),
+                placed: Vec::new(),
                 geometry: Vec::new(),
             },
         )
@@ -173,7 +174,9 @@ impl ParagraphShaper for MonoShaper {
         // back into a full pass.
         if shaped.begin_break(request) {
             self.breaks += 1;
-            shaped.engine.lines = breaking::into_lines(&shaped.engine.clusters, request);
+            let (lines, placed) = breaking::into_lines(&shaped.engine.clusters, request);
+            shaped.engine.lines = lines;
+            shaped.engine.placed = placed;
         }
         let broken = assemble::geometry(shaped, request);
         shaped.engine.geometry = broken.geometry.lines.clone();
