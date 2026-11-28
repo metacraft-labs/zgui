@@ -47,6 +47,9 @@ const CONTINUES: u8 = 8;
 const BOX: u8 = 16;
 /// The first cluster of a step starts a ligature. Used while building only.
 const LIGATURE: u8 = 32;
+/// The step is a glued inline box, an edge of a nested inline box. It adds its box's width like a
+/// box and breaks like a cluster that is no word boundary: no line ends before or after it.
+const GLUED: u8 = 64;
 
 /// One step of the engine's breaker: one cluster, a ligature start with the clusters the engine
 /// adds to it, or one inline box.
@@ -68,7 +71,7 @@ impl Step {
 
     /// How many clusters the step takes.
     fn clusters(self) -> usize {
-        if self.is(BOX) {
+        if self.is(BOX | GLUED) {
             0
         } else {
             usize::from(self.count)
@@ -77,7 +80,7 @@ impl Step {
 
     /// What the step adds to its line, as the engine computes it.
     fn advance(self, boxes: &[InlineBox]) -> f32 {
-        if !self.is(BOX) {
+        if !self.is(BOX | GLUED) {
             return self.advance;
         }
         match boxes.get(usize::from(self.count)) {
@@ -334,10 +337,11 @@ fn steps(layout: &parley::Layout<SlotBrush>) -> Option<Box<[Step]>> {
         let (start, end) = match item {
             Item::Run(start, end) => (start, end),
             Item::Box(index) => {
+                let glued = boxes.get(usize::from(index)).is_some_and(|held| held.glued);
                 steps.push(Step {
                     advance: 0.0,
                     count: index,
-                    flags: BOX,
+                    flags: if glued { GLUED } else { BOX },
                 });
                 continue;
             }
@@ -434,7 +438,7 @@ fn held(
         let mut before = 0.0_f32;
         let mut span = Span::ANY;
         while let Some(&step) = steps.get(at) {
-            if cluster >= end && !(step.is(BOX) && placed < on_line) {
+            if cluster >= end && !(step.is(BOX | GLUED) && placed < on_line) {
                 break;
             }
             // A hard break ends its line before the comparison and adds nothing to it.
@@ -444,7 +448,7 @@ fn held(
                 span.observe(advance, limit);
             }
             cluster += step.clusters();
-            placed += usize::from(step.is(BOX));
+            placed += usize::from(step.is(BOX | GLUED));
             at += 1;
         }
         if cluster != end || placed != on_line {
@@ -549,9 +553,9 @@ impl Ended {
                 let opportunity = if self.regular {
                     (next.is(WORD) && !next.is(CONTINUES)) || last.is(BOX)
                 } else {
-                    !next.is(CONTINUES)
+                    !next.is(CONTINUES | GLUED)
                 };
-                if opportunity && let Some(word) = self.word_after(steps) {
+                if opportunity && let Some(word) = self.word_after(steps, boxes) {
                     possible = true;
                     span.min = span.min.max(word.min);
                     end = end.min(word.end);
@@ -572,7 +576,7 @@ impl Ended {
     ///   or hard break may end the line itself. The steps stop before either.
     ///
     /// `None` when no step overflowed before such a stop, so the line did not end this way.
-    fn word_after(&self, steps: &[Step]) -> Option<Span> {
+    fn word_after(&self, steps: &[Step], boxes: &[InlineBox]) -> Option<Span> {
         let mut x = self.advance;
         let mut widest = f32::NEG_INFINITY;
         let mut min = f32::NEG_INFINITY;
@@ -581,13 +585,14 @@ impl Ended {
                 break;
             }
             if index > self.at && widest > self.limit {
-                let may_break =
-                    step.is(WORD) || (!self.regular && !step.is(CONTINUES)) || step.is(SPACE);
+                let may_break = step.is(WORD)
+                    || (!self.regular && !step.is(CONTINUES | GLUED))
+                    || step.is(SPACE);
                 if may_break {
                     break;
                 }
             }
-            x += step.advance;
+            x += step.advance(boxes);
             if step.is(SPACE) && x <= self.limit {
                 min = min.max(x);
             }

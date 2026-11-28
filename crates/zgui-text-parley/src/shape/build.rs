@@ -237,7 +237,12 @@ pub(crate) fn default_style(content: &ParagraphContent<'_>) -> LoweredStyle {
     }
 }
 
-/// One atomic inline, at the width and the declared height the caller measured it with.
+/// One atomic inline, or one edge of a nested inline box, at the width and the declared height
+/// the caller measured it with.
+///
+/// The engine breaks a line either side of a box. That is right for an atomic inline and wrong for
+/// an edge, which the vendored engine is told about through `glued`: without it a word split
+/// across two elements, `word<b>word</b>`, broke at the element boundary.
 fn inline_box(geometry: &InlineBoxGeometry, prefix: usize) -> parley::InlineBox {
     parley::InlineBox {
         id: geometry.id,
@@ -245,6 +250,7 @@ fn inline_box(geometry: &InlineBoxGeometry, prefix: usize) -> parley::InlineBox 
         index: geometry.offset + prefix,
         width: geometry.width.0,
         height: geometry.shaper_height().0,
+        glued: geometry.glued,
     }
 }
 
@@ -383,6 +389,7 @@ mod tests {
                     height: CssPx(9.0),
                     ascent: CssPx(9.0),
                     shift: CssPx::ZERO,
+                    glued: false,
                 }];
                 let paragraph = ParagraphStyle {
                     direction,

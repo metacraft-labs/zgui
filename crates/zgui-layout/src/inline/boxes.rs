@@ -259,6 +259,7 @@ fn atomic_box<C: MeasureContent>(
             height: CssPx(height),
             ascent: CssPx(ascent),
             shift: CssPx(shift),
+            glued: false,
         },
         alignment,
         Some(Frame {
@@ -298,6 +299,7 @@ fn edge<C: MeasureContent>(
         height: CssPx::ZERO,
         ascent: CssPx::ZERO,
         shift: CssPx::ZERO,
+        glued: true,
     }
 }
 

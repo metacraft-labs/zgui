@@ -31,6 +31,13 @@ pub struct InlineBoxGeometry {
     pub ascent: CssPx,
     /// The resolved `vertical-align` shift, positive upwards.
     pub shift: CssPx,
+    /// Whether a line may not break either side of the box.
+    ///
+    /// An atomic inline is a break opportunity before and after itself (CSS Text 3 §5.1 treats it
+    /// as an ideographic character; Chromium breaks between two inline blocks with nothing between
+    /// them). The margin, border and padding at an edge of a nested inline box reach the breaker as
+    /// a box too, and those are glued: an element boundary inside a word is no place to break.
+    pub glued: bool,
 }
 
 impl InlineBoxGeometry {
@@ -47,6 +54,7 @@ impl InlineBoxGeometry {
     ///     height: CssPx(20.0),
     ///     ascent: CssPx(20.0),
     ///     shift: CssPx(5.0),
+    ///     glued: false,
     /// };
     /// assert_eq!(raised.shaper_height(), CssPx(25.0));
     /// assert_eq!(raised.below_baseline(), CssPx(-5.0));

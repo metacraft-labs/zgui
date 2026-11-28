@@ -196,6 +196,7 @@ fn a_vertical_align_restyle_against_a_warm_cache_moves_the_box() {
         height: CssPx(20.0),
         ascent: CssPx(20.0),
         shift: CssPx::ZERO,
+        glued: false,
     });
 
     let on_baseline = scene.run(Some(CssPx(400.0)));
@@ -237,6 +238,7 @@ fn an_inline_box_resizing_costs_a_shape_of_its_own() {
         height: CssPx(20.0),
         ascent: CssPx(20.0),
         shift: CssPx::ZERO,
+        glued: false,
     });
     let narrow = scene.run(Some(CssPx(400.0)));
 
@@ -270,6 +272,7 @@ fn two_contexts_holding_boxes_of_different_widths_do_not_share_a_shape() {
         height: CssPx(14.0),
         ascent: CssPx(14.0),
         shift: CssPx::ZERO,
+        glued: false,
     });
     let mut wide = Scene::plain("", TextStyle::initial());
     wide.boxes.push(InlineBoxGeometry {

@@ -104,6 +104,7 @@ impl ContentKey {
         for inline_box in content.boxes {
             digest.push(inline_box.id);
             digest.push(inline_box.offset);
+            digest.push(inline_box.glued);
         }
         let segments = content.map.segments();
         digest.push(segments.len());

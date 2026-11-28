@@ -89,3 +89,23 @@ the file was refused as unsettled, and the cache was never written
 (`a_cached_collection_resolves_what_fontconfig_resolves` failed or passed by the second). A file in
 the store is immutable and nothing is ever added beside it, so the store's top directory is not
 stamped. `a_configuration_file_in_the_nix_store_does_not_stamp_the_store` pins it.
+
+## parley 0.11.1 (crates.io)
+
+The line breaker, patched in through `[patch.crates-io]` beside fontique. Without the crate's
+`Cargo.toml.orig` and lock file. Every local change is marked `ZGUI-PATCH:` in the source.
+
+### Glued inline boxes (`inline_box.rs`, `layout/line_break.rs`, `layout/data.rs`)
+
+Upstream treats every inline box as a line break opportunity: a line may break before a box that
+does not fit, and always after one. That is CSS for an atomic inline (CSS Text 3 §5.1). zgui also
+hands the margin, border and padding at each edge of a nested inline box to the breaker as a box
+of that width, and an element boundary inside a word is no opportunity: `word<b>word</b>word` in a
+narrow block broke into three lines where Chromium keeps one.
+
+`InlineBox` has a `glued` field. A glued box offers no opportunity of its own; one that does not fit
+takes the last opportunity before it, or the last emergency one, or overflows the line, as a
+cluster of text does. In the content widths it widens the word it sits in instead of ending it.
+`zgui-text-parley`'s `reach` models a glued box the same way when it keeps a pass's lines, and its
+`rebreak` property test draws glued boxes. `crates/zgui-text-parley/tests/atomic_wrap.rs` pins
+the breaks against Chromium.

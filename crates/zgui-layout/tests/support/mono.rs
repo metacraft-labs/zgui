@@ -42,6 +42,9 @@ pub(crate) struct MonoLayout {
     pub(crate) clusters: Vec<Cluster>,
     /// The last break's line ranges, as cluster indices.
     pub(crate) lines: Vec<(usize, usize)>,
+    /// The atomic inlines each of those lines holds: an index into the paragraph's boxes, and the
+    /// advance before the box on its line.
+    pub(crate) placed: Vec<Vec<(usize, f32)>>,
     /// The last break's answer, returned again when no pass is owed.
     pub(crate) last: BrokenParagraph,
 }
@@ -87,7 +90,7 @@ impl ParagraphShaper for MonoShaper {
         }
 
         let widths = ContentWidths {
-            min: longest_word(content.text, &clusters, content.boxes),
+            min: longest_word(&clusters, content.boxes),
             max: CssPx(
                 clusters
                     .iter()
@@ -114,6 +117,7 @@ impl ParagraphShaper for MonoShaper {
             MonoLayout {
                 clusters,
                 lines: Vec::new(),
+                placed: Vec::new(),
                 last: BrokenParagraph::default(),
             },
         )
@@ -129,8 +133,9 @@ impl ParagraphShaper for MonoShaper {
         }
         self.breaks += 1;
         self.widths.push(request.max_advance.map(|width| width.0));
-        let lines = break_into_lines(&shaped.engine.clusters, shaped.boxes(), request);
+        let (lines, placed) = break_into_lines(&shaped.engine.clusters, shaped.boxes(), request);
         shaped.engine.lines = lines;
+        shaped.engine.placed = placed;
         let broken = assemble(shaped, request);
         shaped.engine.last = broken.clone();
         broken
@@ -223,27 +228,74 @@ impl ParagraphShaper for MonoShaper {
     }
 }
 
-/// The widest thing that cannot be broken: the longest word, or the widest box, whichever is more.
-fn longest_word(text: &str, clusters: &[Cluster], boxes: &[InlineBoxGeometry]) -> CssPx {
-    let advance = clusters.first().map_or(8.0, |cluster| cluster.advance.0);
-    let longest = text
-        .split([' ', '\n'])
-        .map(|word| word.chars().count())
-        .max()
-        .unwrap_or(0);
-    let widest_box = boxes
-        .iter()
-        .map(|geometry| geometry.width.0)
-        .fold(0.0_f32, f32::max);
-    CssPx((longest as f32 * advance).max(widest_box))
+/// The widest thing that cannot be broken: the longest run of clusters between two break
+/// opportunities, or the widest box, whichever is more. A box is an opportunity either side of
+/// itself, so a word glued to one ends at it.
+fn longest_word(clusters: &[Cluster], boxes: &[InlineBoxGeometry]) -> CssPx {
+    let mut widest: f32 = 0.0;
+    let mut word: f32 = 0.0;
+    for item in items(clusters, boxes) {
+        match item {
+            Item::Box(index) if boxes[index].glued => word += boxes[index].width.0,
+            Item::Box(index) => {
+                widest = widest.max(word).max(boxes[index].width.0);
+                word = 0.0;
+            }
+            Item::Cluster(index) if clusters[index].breakable || clusters[index].forced => {
+                widest = widest.max(word);
+                word = 0.0;
+            }
+            Item::Cluster(index) => word += clusters[index].advance.0,
+        }
+    }
+    CssPx(widest.max(word))
+}
+
+/// One thing on a line, in logical order: a character's cluster or an atomic inline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Item {
+    /// An index into the clusters.
+    Cluster(usize),
+    /// An index into the paragraph's boxes.
+    Box(usize),
+}
+
+/// The clusters and the boxes in the order a line holds them. A box sits before the character at
+/// its offset, after every character and box before it; boxes at one offset keep their order.
+fn items(clusters: &[Cluster], boxes: &[InlineBoxGeometry]) -> Vec<Item> {
+    let mut order: Vec<usize> = (0..boxes.len()).collect();
+    order.sort_by_key(|&index| boxes[index].offset);
+    let mut out = Vec::with_capacity(clusters.len() + boxes.len());
+    let mut next = 0;
+    for (index, cluster) in clusters.iter().enumerate() {
+        while next < order.len() && boxes[order[next]].offset <= cluster.offset {
+            out.push(Item::Box(order[next]));
+            next += 1;
+        }
+        out.push(Item::Cluster(index));
+    }
+    out.extend(order[next..].iter().map(|&index| Item::Box(index)));
+    out
 }
 
 /// Greedy line breaking: take a break at the last opportunity that still fits.
+///
+/// The opportunities are the engine's: before a space, and before and after every atomic inline,
+/// which CSS Text 3 §5.1 treats like an ideographic character (and CSS 2.1 §16.6 leaves wrapping
+/// to `white-space`). Chromium 141 breaks the same places: between two inline blocks with nothing
+/// between them, and between a word and an inline block that touches it. The edges of a nested
+/// inline box are glued and offer none: Chromium does not break `word<span>word</span>word`.
+///
+/// One simplification remains: a line broken at a space starts with that space here, where the
+/// engine and Chromium hang it at the end of the line before. So what follows on a wrapped line
+/// sits one space further in.
+///
+/// Returns each line's clusters as a range, and the boxes on it with the advance before each.
 fn break_into_lines(
     clusters: &[Cluster],
     boxes: &[InlineBoxGeometry],
     request: &BreakRequest<'_>,
-) -> Vec<(usize, usize)> {
+) -> (Vec<(usize, usize)>, Vec<Vec<(usize, f32)>>) {
     let wrapping = request
         .runs
         .first()
@@ -257,16 +309,17 @@ fn break_into_lines(
                 OverflowWrap::BreakWord | OverflowWrap::Anywhere
             )
     });
-    let width_of = |index: usize, cluster: &Cluster| {
-        cluster.advance.0
-            + boxes
-                .iter()
-                .filter(|geometry| {
-                    geometry.offset == cluster.offset && index > 0
-                        || geometry.offset == 0 && index == 0
-                })
-                .map(|geometry| geometry.width.0)
-                .sum::<f32>()
+    let items = items(clusters, boxes);
+    let width = |item: Item| match item {
+        Item::Cluster(index) => clusters[index].advance.0,
+        Item::Box(index) => boxes[index].width.0,
+    };
+    // An edge of a nested inline box is glued: no opportunity either side of it.
+    let atomic = |at: usize| matches!(items[at], Item::Box(index) if !boxes[index].glued);
+    let opportunity_before = |at: usize| {
+        atomic(at)
+            || matches!(items[at], Item::Cluster(index) if clusters[index].breakable)
+            || (at > 0 && atomic(at - 1))
     };
     let limit = |line: usize| {
         request
@@ -276,42 +329,67 @@ fn break_into_lines(
             .or(request.max_advance.map(|width| width.0))
     };
 
-    let mut lines: Vec<(usize, usize)> = Vec::new();
+    // Item ranges first; a forced break's own cluster belongs to neither line.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
     let mut start = 0;
     let mut advance = request.indent().0;
     let mut last_opportunity = None;
-    for (index, cluster) in clusters.iter().enumerate() {
-        if cluster.forced {
-            // The break is *at* the newline: it ends the line before it and belongs to neither.
-            lines.push((start, index));
-            start = index + 1;
+    for (at, &item) in items.iter().enumerate() {
+        if let Item::Cluster(index) = item
+            && clusters[index].forced
+        {
+            ranges.push((start, at));
+            start = at + 1;
             advance = 0.0;
             last_opportunity = None;
             continue;
         }
-        if cluster.breakable && index > start {
-            last_opportunity = Some(index);
+        if at > start && opportunity_before(at) {
+            last_opportunity = Some(at);
         }
-        let fits = match limit(lines.len()).filter(|_| wrapping) {
-            Some(limit) => advance + width_of(index, cluster) <= limit,
+        let fits = match limit(ranges.len()).filter(|_| wrapping) {
+            Some(limit) => advance + width(item) <= limit,
             None => true,
         };
-        if !fits && index > start && (last_opportunity.is_some() || emergency) {
-            let split = last_opportunity.unwrap_or(index);
-            lines.push((start, split));
+        if !fits && at > start && (last_opportunity.is_some() || emergency) {
+            let split = last_opportunity.unwrap_or(at);
+            ranges.push((start, split));
             start = split;
-            advance = clusters[start..=index]
-                .iter()
-                .enumerate()
-                .map(|(offset, cluster)| width_of(start + offset, cluster))
-                .sum();
+            advance = items[start..=at].iter().map(|&held| width(held)).sum();
             last_opportunity = None;
         } else {
-            advance += width_of(index, cluster);
+            advance += width(item);
         }
     }
-    lines.push((start, clusters.len()));
-    lines
+    ranges.push((start, items.len()));
+
+    // The clusters before each item, which turns an item range into a cluster range.
+    let mut before = Vec::with_capacity(items.len() + 1);
+    let mut count = 0;
+    for item in &items {
+        before.push(count);
+        if matches!(item, Item::Cluster(_)) {
+            count += 1;
+        }
+    }
+    before.push(count);
+    let mut lines = Vec::with_capacity(ranges.len());
+    let mut placed = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        // A forced break's cluster sits between two ranges; the next line starts after it.
+        let first = before[start].max(lines.last().map_or(0, |&(_, end): &(usize, usize)| end));
+        lines.push((first, before[end].max(first)));
+        let mut pen = 0.0;
+        let mut on_line = Vec::new();
+        for &item in &items[start..end] {
+            if let Item::Box(index) = item {
+                on_line.push((index, pen));
+            }
+            pen += width(item);
+        }
+        placed.push(on_line);
+    }
+    (lines, placed)
 }
 
 /// Builds the geometry the caller reads, from the line ranges the last break produced.
@@ -328,22 +406,27 @@ fn assemble(shaped: &ShapedParagraph<MonoLayout>, request: &BreakRequest<'_>) ->
         let past = clusters
             .get(end)
             .map_or(shaped.text().len(), |cluster| cluster.offset);
-        let on_line: Vec<&InlineBoxGeometry> = shaped
-            .boxes()
+        let on_line: Vec<(&InlineBoxGeometry, f32)> = shaped.engine.placed[index]
             .iter()
-            .filter(|geometry| {
-                geometry.offset >= first && (geometry.offset < past || end == clusters.len())
-            })
+            .map(|&(at, before)| (&shaped.boxes()[at], before))
             .collect();
+        let first = match on_line.first() {
+            Some((geometry, _)) if start == end => geometry.offset.min(past),
+            _ => first,
+        };
 
-        let ascent = on_line.iter().fold(strut.ascent(), |tallest, geometry| {
-            CssPx(tallest.0.max(geometry.shaper_height().0))
-        });
-        let descent = on_line.iter().fold(strut.descent(), |deepest, geometry| {
-            CssPx(deepest.0.max(geometry.below_baseline().0))
-        });
+        let ascent = on_line
+            .iter()
+            .fold(strut.ascent(), |tallest, (geometry, _)| {
+                CssPx(tallest.0.max(geometry.shaper_height().0))
+            });
+        let descent = on_line
+            .iter()
+            .fold(strut.descent(), |deepest, (geometry, _)| {
+                CssPx(deepest.0.max(geometry.below_baseline().0))
+            });
         let text_advance: f32 = clusters[start..end].iter().map(|c| c.advance.0).sum();
-        let box_advance: f32 = on_line.iter().map(|geometry| geometry.width.0).sum();
+        let box_advance: f32 = on_line.iter().map(|(geometry, _)| geometry.width.0).sum();
         let width = text_advance + box_advance;
         let indent = if index == 0 { request.indent().0 } else { 0.0 };
         let band = request.bands.at(index);
@@ -352,23 +435,15 @@ fn assemble(shaped: &ShapedParagraph<MonoLayout>, request: &BreakRequest<'_>) ->
             + indent;
 
         let baseline = CssPx(top.0 + ascent.0);
-        // A box sits before the character at its offset, after every character and box before it.
-        let mut boxes_before = 0.0;
-        for geometry in on_line {
-            let text_before: f32 = clusters[start..end]
-                .iter()
-                .filter(|cluster| cluster.offset < geometry.offset)
-                .map(|cluster| cluster.advance.0)
-                .sum();
+        for (geometry, before) in on_line {
             boxes.push(InlineBoxPlacement {
                 id: geometry.id,
                 origin: Point::new(
-                    CssPx(offset + text_before + boxes_before),
+                    CssPx(offset + before),
                     CssPx(baseline.0 - geometry.shaper_height().0),
                 ),
                 line: index,
             });
-            boxes_before += geometry.width.0;
         }
 
         widest = widest.max(width + indent + band.map_or(0.0, |band| band.offset.0));

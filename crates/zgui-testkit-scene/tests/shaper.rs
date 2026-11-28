@@ -161,6 +161,7 @@ fn an_inline_box_makes_its_line_taller_and_is_placed_on_it() {
         height: CssPx(40.0),
         ascent: CssPx(40.0),
         shift: CssPx::ZERO,
+        glued: false,
     }];
 
     let broken = paragraph.run(Some(CssPx(200.0)));
@@ -183,6 +184,7 @@ fn a_vertical_align_shift_moves_the_box_without_reshaping() {
         height: CssPx(20.0),
         ascent: CssPx(8.0),
         shift: CssPx::ZERO,
+        glued: false,
     }];
     let flat = paragraph.run(Some(CssPx(200.0)));
 
